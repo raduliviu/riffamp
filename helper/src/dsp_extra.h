@@ -106,20 +106,24 @@ struct Metronome {
         sr = sampleRate;
         decay = std::exp(-1.0f / (0.025f * sr));  // ~25 ms click tail
     }
+    long long clickCount = 0;  // total clicks fired (read via Engine atomics for UI flashes)
+
     // Call once per block before the sample loop.
     void blockStart(bool on) {
         if (on && !wasOn) { beat = -1; samplesToNext = 0; env = 0; }  // restart on accent
         wasOn = on;
     }
-    float process(bool on, float bpm, int beatsPerBar) {
+    float process(bool on, float bpm, int beatsPerBar, bool accentFirst) {
         if (!on) { env = 0; return 0.0f; }
         if (--samplesToNext <= 0) {
-            samplesToNext = static_cast<long long>(sr * 60.0f / std::max(30.0f, bpm));
+            samplesToNext = static_cast<long long>(sr * 60.0f / std::max(20.0f, bpm));
             beat = (beat + 1) % std::max(1, beatsPerBar);
-            const float freq = (beat == 0) ? 1600.0f : 1100.0f;
+            const bool accent = accentFirst && beat == 0;
+            const float freq = accent ? 1600.0f : 1100.0f;
             phaseInc = 2.0 * 3.14159265358979 * freq / sr;
             phase = 0;
-            env = (beat == 0) ? 1.0f : 0.7f;
+            env = accent ? 1.0f : 0.7f;
+            ++clickCount;
         }
         if (env < 1e-4f) return 0.0f;
         const float s = static_cast<float>(std::sin(phase)) * env;

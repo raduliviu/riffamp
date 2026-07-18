@@ -50,10 +50,42 @@
   #muteBtn { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
              border-radius: 8px; padding: 0.6rem 1.4rem; cursor: pointer; }
   #muteBtn.muted { border-color: var(--bad); color: var(--bad); }
-  #metroBtn { background: var(--panel); color: var(--text); border: 1px solid var(--line);
-              border-radius: 8px; padding: 0.6rem 1.2rem; cursor: pointer; min-width: 6.5rem; }
-  #metroBtn.on { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 8px #e0a45833; }
-  input[type="range"] { accent-color: var(--accent); }
+  /* metronome (ported from the standalone metronome app, webamp palette) */
+  #beatDots { display: flex; justify-content: center; gap: 0.6rem; min-height: 1rem; margin-bottom: 1rem; }
+  #beatDots .dot { width: 0.9rem; height: 0.9rem; border-radius: 50%; background: var(--line);
+                   transition: all 0.1s ease-out; }
+  #beatDots .dot.beat { background: var(--text); transform: scale(1.35); box-shadow: 0 0 14px #e8ddd0aa; }
+  #beatDots .dot.accent { background: var(--accent); transform: scale(1.35); box-shadow: 0 0 16px #e0a458cc; }
+  .bpmRow { display: flex; align-items: center; justify-content: center; gap: 1.1rem; margin-bottom: 1rem; }
+  .bpmRow .round { width: 3rem; height: 3rem; border-radius: 50%; border: 1px solid var(--line);
+                   background: var(--panel); color: var(--text); font-size: 1.4rem; cursor: pointer; }
+  .bpmRow .round:active { transform: scale(0.95); }
+  .bpmBox { display: flex; flex-direction: column; min-width: 8rem; }
+  .bpmBox input { background: transparent; border: 0; border-bottom: 2px solid transparent; outline: none;
+                  color: var(--text); font-size: 3.2rem; font-weight: 700; text-align: center;
+                  font-variant-numeric: tabular-nums; width: 100%; caret-color: var(--accent); }
+  .bpmBox input:focus { border-bottom-color: var(--accent); }
+  .bpmBox input.range-flash { color: var(--bad); }
+  .bpmBox span { font-size: 0.7rem; letter-spacing: 0.2em; color: var(--dim); margin-top: 0.2rem; }
+  #metroBtn { width: 100%; max-width: 22rem; background: var(--panel); color: var(--text);
+              border: 1px solid var(--line); border-radius: 10px; padding: 0.8rem; font-size: 1rem;
+              font-weight: 600; cursor: pointer; margin-bottom: 1rem; }
+  #metroBtn.on { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 10px #e0a45840; }
+  .metroOpts { display: flex; gap: 0.8rem; justify-content: center; align-items: end; flex-wrap: wrap;
+               margin-bottom: 0.8rem; font-size: 0.7rem; color: var(--dim); letter-spacing: 0.1em; }
+  .metroOpts label { display: flex; flex-direction: column; gap: 0.3rem; }
+  .metroOpts label.accent { flex-direction: row; align-items: center; cursor: pointer; }
+  .metroOpts input[type="number"] { width: 4rem; background: var(--panel); color: var(--text);
+                                    border: 1px solid var(--line); border-radius: 8px; padding: 0.45rem;
+                                    text-align: center; font-size: 0.9rem; }
+  .metroOpts input[type="checkbox"] { accent-color: var(--accent); }
+  #tapBtn { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+            border-radius: 8px; padding: 0.55rem 1rem; cursor: pointer; font-size: 0.75rem;
+            letter-spacing: 0.1em; }
+  #tapBtn.flash { border-color: var(--accent); color: var(--accent); }
+  .kbd { font-size: 0.68rem; color: var(--dim); }
+  .kbd kbd { background: var(--panel); border: 1px solid var(--line); border-bottom-width: 2px;
+             border-radius: 5px; padding: 0.1rem 0.35rem; color: var(--text); }
   #offline { display: none; text-align: center; padding: 2rem 0; color: var(--dim); }
   #offline.show { display: block; }
   #panel.hidden { display: none; }
@@ -85,19 +117,26 @@
 
     <div class="section">
       <h2>Metronome</h2>
-      <div style="display: flex; gap: 1.4rem; align-items: center; flex-wrap: wrap;">
-        <button id="metroBtn">▶ START</button>
-        <div style="flex: 1 1 12rem; min-width: 10rem;">
-          <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--dim);">
-            <span>TEMPO</span><span id="bpmVal" style="color: var(--accent);">120 BPM</span>
+      <div style="display: flex; gap: 1.6rem; align-items: center; flex-wrap: wrap;">
+        <div style="flex: 1 1 22rem; text-align: center;">
+          <div id="beatDots" aria-hidden="true"></div>
+          <div class="bpmRow">
+            <button id="decBtn" class="round" aria-label="Decrease tempo">&minus;</button>
+            <div class="bpmBox">
+              <input id="bpmValue" type="text" inputmode="numeric" maxlength="3" value="120" aria-label="Tempo in BPM">
+              <span>BPM</span>
+            </div>
+            <button id="incBtn" class="round" aria-label="Increase tempo">+</button>
           </div>
-          <input type="range" id="bpmSlider" min="30" max="300" step="1" value="120" style="width: 100%;">
+          <button id="metroBtn">▶ START</button>
+          <div class="metroOpts">
+            <label>STEP <input type="number" id="stepInput" min="1" max="30" value="5"></label>
+            <label>BEATS <input type="number" id="beatsInput" min="1" max="12" value="4"></label>
+            <button id="tapBtn">TAP TEMPO</button>
+            <label class="accent"><input type="checkbox" id="accentToggle" checked> ACCENT 1st</label>
+          </div>
+          <div class="kbd"><kbd>Space</kbd> start/stop · <kbd>↑</kbd> faster · <kbd>↓</kbd> slower · <kbd>T</kbd> tap · click the number to type</div>
         </div>
-        <label style="font-size: 0.75rem; color: var(--dim);">BEATS
-          <select id="beatsSel" style="width: 4rem; margin-left: 0.4rem;">
-            <option>2</option><option>3</option><option selected>4</option><option>6</option><option>8</option>
-          </select>
-        </label>
         <div id="metroKnob"></div>
       </div>
     </div>
@@ -252,11 +291,15 @@ function applyState(msg) {
   mb.textContent = msg.params.metroOn ? "■ STOP" : "▶ START";
   mb.className = msg.params.metroOn ? "on" : "";
   state.params.metroOn = msg.params.metroOn;
-  if (document.activeElement !== $("bpmSlider")) {
-    $("bpmSlider").value = msg.params.metroBpm;
-    $("bpmVal").textContent = `${Math.round(msg.params.metroBpm)} BPM`;
-  }
-  $("beatsSel").value = String(msg.params.metroBeats);
+  state.params.metroBpm = msg.params.metroBpm;
+  state.params.metroBeats = msg.params.metroBeats;
+  state.params.metroAccent = msg.params.metroAccent;
+  if (document.activeElement !== $("bpmValue"))
+    $("bpmValue").value = String(Math.round(msg.params.metroBpm));
+  if (document.activeElement !== $("beatsInput"))
+    $("beatsInput").value = String(msg.params.metroBeats);
+  $("accentToggle").checked = !!msg.params.metroAccent;
+  renderBeatDots(msg.params.metroBeats);
   // mute + engine info
   $("muteBtn").className = msg.params.mute ? "muted" : "";
   $("muteBtn").textContent = msg.params.mute ? "UNMUTE" : "MUTE";
@@ -270,15 +313,105 @@ function applyState(msg) {
 
 $("irSel").addEventListener("change", (e) =>
   ws && ws.send(JSON.stringify({ type: "setIr", name: e.target.value })));
-$("metroBtn").addEventListener("click", () =>
-  ws && ws.send(JSON.stringify({ type: "setParam", id: "metroOn", value: state.params.metroOn ? 0 : 1 })));
-$("bpmSlider").addEventListener("input", (e) => {
-  const v = Number(e.target.value);
-  $("bpmVal").textContent = `${v} BPM`;
-  queueParam("metroBpm", v);
+// ---- metronome (UX ported from F:\codework\metronome, engine-clocked) --------
+const MIN_BPM = 20, MAX_BPM = 360;
+let metroStep = Number(localStorage.getItem("webamp:metroStep")) || 5;
+$("stepInput").value = String(metroStep);
+let tapTimes = [];
+let lastBeatCount = -1;
+let rangeFlashTimer = null;
+
+function renderBeatDots(n) {
+  const box = $("beatDots");
+  if (box.children.length === n) return;
+  box.innerHTML = "";
+  for (let i = 0; i < n; i++) {
+    const d = document.createElement("div");
+    d.className = "dot";
+    box.appendChild(d);
+  }
+}
+function flashBeat(index) {
+  const dots = $("beatDots").children;
+  const dot = dots[index % Math.max(1, dots.length)];
+  if (!dot) return;
+  const cls = (state.params.metroAccent && index === 0) ? "accent" : "beat";
+  dot.classList.add(cls);
+  setTimeout(() => dot.classList.remove(cls), 90);
+}
+function setBpm(value) {
+  const rounded = Math.round(value);
+  const clamped = Math.min(MAX_BPM, Math.max(MIN_BPM, rounded));
+  if (clamped !== rounded) {
+    $("bpmValue").classList.add("range-flash");
+    if (rangeFlashTimer) clearTimeout(rangeFlashTimer);
+    rangeFlashTimer = setTimeout(() => $("bpmValue").classList.remove("range-flash"), 500);
+  }
+  state.params.metroBpm = clamped;
+  $("bpmValue").value = String(clamped);
+  queueParam("metroBpm", clamped);
+}
+function nudgeBpm(dir) { setBpm((state.params.metroBpm ?? 120) + dir * metroStep); }
+function toggleMetro() {
+  ws && ws.send(JSON.stringify({ type: "setParam", id: "metroOn", value: state.params.metroOn ? 0 : 1 }));
+}
+function tap() {
+  const now = performance.now();
+  if (tapTimes.length && now - tapTimes[tapTimes.length - 1] > 2000) tapTimes = [];
+  tapTimes.push(now);
+  if (tapTimes.length > 5) tapTimes.shift();
+  if (tapTimes.length >= 2) {
+    let sum = 0;
+    for (let i = 1; i < tapTimes.length; i++) sum += tapTimes[i] - tapTimes[i - 1];
+    setBpm(60000 / (sum / (tapTimes.length - 1)));
+  }
+  $("tapBtn").classList.add("flash");
+  setTimeout(() => $("tapBtn").classList.remove("flash"), 100);
+}
+
+$("metroBtn").addEventListener("click", toggleMetro);
+$("incBtn").addEventListener("click", () => nudgeBpm(1));
+$("decBtn").addEventListener("click", () => nudgeBpm(-1));
+$("tapBtn").addEventListener("click", tap);
+$("bpmValue").addEventListener("focus", (e) => e.target.select());
+$("bpmValue").addEventListener("input", (e) => {
+  const digits = e.target.value.replace(/[^0-9]/g, "");
+  if (digits !== e.target.value) e.target.value = digits;
 });
-$("beatsSel").addEventListener("change", (e) =>
-  ws && ws.send(JSON.stringify({ type: "setParam", id: "metroBeats", value: Number(e.target.value) })));
+function commitBpmInput() {
+  const parsed = parseInt($("bpmValue").value, 10);
+  if (Number.isFinite(parsed)) setBpm(parsed);
+  else $("bpmValue").value = String(Math.round(state.params.metroBpm ?? 120));
+}
+$("bpmValue").addEventListener("change", commitBpmInput);
+$("bpmValue").addEventListener("keydown", (e) => {
+  if (e.code === "Enter") { e.preventDefault(); commitBpmInput(); e.target.blur(); }
+  else if (e.code === "Escape") { e.preventDefault(); $("bpmValue").value = String(Math.round(state.params.metroBpm ?? 120)); e.target.blur(); }
+});
+$("stepInput").addEventListener("change", (e) => {
+  metroStep = Math.min(30, Math.max(1, parseInt(e.target.value, 10) || metroStep));
+  e.target.value = String(metroStep);
+  localStorage.setItem("webamp:metroStep", String(metroStep));
+});
+$("beatsInput").addEventListener("change", (e) => {
+  const v = Math.min(12, Math.max(1, parseInt(e.target.value, 10) || 4));
+  e.target.value = String(v);
+  ws && ws.send(JSON.stringify({ type: "setParam", id: "metroBeats", value: v }));
+});
+$("accentToggle").addEventListener("change", (e) =>
+  ws && ws.send(JSON.stringify({ type: "setParam", id: "metroAccent", value: e.target.checked ? 1 : 0 })));
+document.addEventListener("keydown", (e) => {
+  const editing = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "SELECT");
+  const inNumber = e.target === $("stepInput") || e.target === $("beatsInput");
+  if (!inNumber && (e.code === "ArrowUp" || e.code === "ArrowDown")) {
+    e.preventDefault();
+    nudgeBpm(e.code === "ArrowUp" ? 1 : -1);
+    return;
+  }
+  if (editing) return;
+  if (e.code === "Space") { e.preventDefault(); toggleMetro(); }
+  else if (e.code === "KeyT") { e.preventDefault(); tap(); }
+});
 $("muteBtn").addEventListener("click", () =>
   ws && ws.send(JSON.stringify({ type: "setParam", id: "mute", value: state.params.mute ? 0 : 1 })));
 
@@ -298,6 +431,10 @@ function connect() {
     else if (msg.type === "meters") {
       $("meterIn").style.width = Math.min(100, Math.sqrt(msg.in) * 110) + "%";
       $("meterOut").style.width = Math.min(100, Math.sqrt(msg.out) * 110) + "%";
+      if (msg.beatCount !== lastBeatCount) {
+        if (lastBeatCount >= 0 && state.params.metroOn) flashBeat(msg.beatInBar);
+        lastBeatCount = msg.beatCount;
+      }
     }
   };
   ws.onclose = () => { setConn(false, "engine offline"); setTimeout(connect, 2000); };

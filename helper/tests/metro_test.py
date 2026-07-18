@@ -34,7 +34,11 @@ checks.append(("metro params in state", all(
 s = rpc({"type": "setParam", "id": "metroBpm", "value": 90})
 checks.append(("bpm set", s["params"]["metroBpm"] == 90))
 s = rpc({"type": "setParam", "id": "metroBpm", "value": 999})
-checks.append(("bpm clamped", s["params"]["metroBpm"] == 300))
+checks.append(("bpm clamped", s["params"]["metroBpm"] == 360))
+s = rpc({"type": "setParam", "id": "metroAccent", "value": 0})
+checks.append(("accent off", s["params"]["metroAccent"] is False))
+s = rpc({"type": "setParam", "id": "metroAccent", "value": 1})
+checks.append(("accent on", s["params"]["metroAccent"] is True))
 s = rpc({"type": "setParam", "id": "metroBpm", "value": 120})
 
 quiet = out_peak(1.5)

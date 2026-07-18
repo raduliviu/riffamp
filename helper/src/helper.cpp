@@ -234,9 +234,11 @@ struct Engine {
     std::atomic<float> bassDb{0.0f}, midDb{0.0f}, trebleDb{0.0f};
     std::atomic<bool> mute{false};
     std::atomic<bool> toneDirty{true};
-    std::atomic<bool> metroOn{false};
+    std::atomic<bool> metroOn{false}, metroAccent{true};
     std::atomic<float> metroBpm{120.0f}, metroVol{0.5f};
     std::atomic<int> metroBeats{4};
+    std::atomic<long long> beatCount{0};  // clicks fired; UI flashes on change
+    std::atomic<int> beatInBar{0};
 
     webamp::ToneStack tone;
     webamp::NoiseGate gate;
@@ -293,15 +295,18 @@ struct Engine {
         const float mBpm = metroBpm.load(std::memory_order_relaxed);
         const float mVol = metroVol.load(std::memory_order_relaxed);
         const int mBeats = metroBeats.load(std::memory_order_relaxed);
+        const bool mAccent = metroAccent.load(std::memory_order_relaxed);
         metro.blockStart(mOn);
 
         float pOut = 0.0f;
         for (unsigned long f = 0; f < frames; ++f) {
-            const float click = metro.process(mOn, mBpm, mBeats) * mVol;
+            const float click = metro.process(mOn, mBpm, mBeats, mAccent) * mVol;
             const float v = std::clamp(bufA[f] * gOut + click, -1.0f, 1.0f);
             pOut = std::max(pOut, std::fabs(v));
             for (int c = 0; c < chOut; ++c) out[f * chOut + c] = v;
         }
+        beatCount.store(metro.clickCount, std::memory_order_relaxed);
+        beatInBar.store(metro.beat, std::memory_order_relaxed);
         float cur = peakIn.load(std::memory_order_relaxed);
         while (pIn > cur && !peakIn.compare_exchange_weak(cur, pIn)) {}
         cur = peakOut.load(std::memory_order_relaxed);
@@ -404,6 +409,7 @@ struct Control {
               {"treble", engine.trebleDb.load()},
               {"mute", engine.mute.load()},
               {"metroOn", engine.metroOn.load()},
+              {"metroAccent", engine.metroAccent.load()},
               {"metroBpm", engine.metroBpm.load()},
               {"metroBeats", engine.metroBeats.load()},
               {"metroVol", engine.metroVol.load()}}},
@@ -443,8 +449,9 @@ struct Control {
             else if (id == "treble") { engine.trebleDb.store(std::clamp(v, -12.0f, 12.0f)); engine.toneDirty.store(true); }
             else if (id == "mute") engine.mute.store(v != 0.0f);
             else if (id == "metroOn") engine.metroOn.store(v != 0.0f);
-            else if (id == "metroBpm") engine.metroBpm.store(std::clamp(v, 30.0f, 300.0f));
-            else if (id == "metroBeats") engine.metroBeats.store(std::clamp(static_cast<int>(v), 1, 8));
+            else if (id == "metroAccent") engine.metroAccent.store(v != 0.0f);
+            else if (id == "metroBpm") engine.metroBpm.store(std::clamp(v, 20.0f, 360.0f));
+            else if (id == "metroBeats") engine.metroBeats.store(std::clamp(static_cast<int>(v), 1, 12));
             else if (id == "metroVol") engine.metroVol.store(std::clamp(v, 0.0f, 2.0f));
             else return {{"type", "error"}, {"message", "unknown param: " + id}};
             *changed = true;
@@ -648,14 +655,16 @@ int main(int argc, char** argv) {
     };
     std::thread tray(trayThread);
 
-    // Meter broadcast loop (~15 Hz) until the tray quits us.
+    // Meter + beat broadcast loop (~25 Hz) until the tray quits us.
     while (gRunning.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(66));
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
         const auto clients = server.getClients();
         if (clients.empty()) continue;
         const json m = {{"type", "meters"},
                         {"in", engine.peakIn.exchange(0.0f)},
-                        {"out", engine.peakOut.exchange(0.0f)}};
+                        {"out", engine.peakOut.exchange(0.0f)},
+                        {"beatCount", engine.beatCount.load(std::memory_order_relaxed)},
+                        {"beatInBar", engine.beatInBar.load(std::memory_order_relaxed)}};
         const std::string s = m.dump();
         for (auto&& client : clients) client->send(s);
     }

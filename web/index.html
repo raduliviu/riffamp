@@ -133,7 +133,10 @@
   .centsTrack .tick.major { height: 65%; opacity: 0.6; }
   .centsScale { position: relative; height: 1rem; font-size: 0.65rem; color: var(--dim); }
   .centsScale span { position: absolute; transform: translateX(-50%); }
-  #tunerFreq { text-align: center; font-size: 0.7rem; color: var(--dim); min-height: 1em; margin-top: 0.1rem; }
+  #tunerCents { text-align: center; font-size: 1rem; font-weight: 600; color: var(--text);
+                font-variant-numeric: tabular-nums; min-height: 1.2em; margin-top: 0.15rem; }
+  #tunerCents.in-tune { color: var(--ok); }
+  #tunerCents.idle { color: var(--dim); font-weight: 400; }
   #offline { display: none; text-align: center; padding: 2rem 0; color: var(--dim); }
   #offline.show { display: block; }
   #panel.hidden { display: none; }
@@ -171,7 +174,7 @@
             <span style="left: 75%;">+25</span>
             <span style="left: auto; right: 0; transform: none;">+50</span>
           </div>
-          <div id="tunerFreq"></div>
+          <div id="tunerCents"></div>
         </div>
       </div>
     </div>
@@ -478,21 +481,24 @@ function tap() {
   }
 })();
 function updateTuner(msg) {
-  const note = $("tunerNote"), needle = $("centsNeedle"), freq = $("tunerFreq");
+  const note = $("tunerNote"), needle = $("centsNeedle"), cents = $("tunerCents");
   if (msg.freq > 0) {
-    const cents = Math.max(-50, Math.min(50, msg.cents));
+    const clamped = Math.max(-50, Math.min(50, msg.cents));
     const inTune = Math.abs(msg.cents) < 5;
     note.textContent = msg.note;
     note.className = inTune ? "in-tune" : "active";
-    needle.style.left = `${50 + cents}%`;
+    needle.style.left = `${50 + clamped}%`;
     needle.className = inTune ? "active in-tune" : "active";
-    freq.textContent = `${msg.freq.toFixed(1)} Hz`;
+    const rounded = Math.round(msg.cents);
+    cents.textContent = `${rounded > 0 ? "+" : ""}${rounded} ¢`;
+    cents.className = inTune ? "in-tune" : "";
   } else {
     note.textContent = "—";
     note.className = "";
     needle.style.left = "50%";
     needle.className = "";
-    freq.textContent = "";
+    cents.textContent = "";
+    cents.className = "idle";
   }
 }
 $("tunerBtn").addEventListener("click", () =>

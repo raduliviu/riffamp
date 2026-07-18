@@ -234,9 +234,13 @@ struct Engine {
     std::atomic<float> bassDb{0.0f}, midDb{0.0f}, trebleDb{0.0f};
     std::atomic<bool> mute{false};
     std::atomic<bool> toneDirty{true};
+    std::atomic<bool> metroOn{false};
+    std::atomic<float> metroBpm{120.0f}, metroVol{0.5f};
+    std::atomic<int> metroBeats{4};
 
     webamp::ToneStack tone;
     webamp::NoiseGate gate;
+    webamp::Metronome metro;
     std::vector<float> bufA, bufB;
     std::atomic<float> peakIn{0.0f}, peakOut{0.0f};
     std::atomic<long> xruns{0};
@@ -250,6 +254,7 @@ struct Engine {
         bufA.resize(opt.buffer);
         bufB.resize(opt.buffer);
         gate.configure(static_cast<float>(opt.sr));
+        metro.configure(static_cast<float>(opt.sr));
     }
 
     void process(const float* in, float* out, unsigned long frames) {
@@ -284,9 +289,16 @@ struct Engine {
         for (unsigned long f = 0; f < frames; ++f) bufB[f] = tone.process(bufB[f]);
         cv->process(bufB.data(), bufA.data(), frames);
 
+        const bool mOn = metroOn.load(std::memory_order_relaxed);
+        const float mBpm = metroBpm.load(std::memory_order_relaxed);
+        const float mVol = metroVol.load(std::memory_order_relaxed);
+        const int mBeats = metroBeats.load(std::memory_order_relaxed);
+        metro.blockStart(mOn);
+
         float pOut = 0.0f;
         for (unsigned long f = 0; f < frames; ++f) {
-            const float v = std::clamp(bufA[f] * gOut, -1.0f, 1.0f);
+            const float click = metro.process(mOn, mBpm, mBeats) * mVol;
+            const float v = std::clamp(bufA[f] * gOut + click, -1.0f, 1.0f);
             pOut = std::max(pOut, std::fabs(v));
             for (int c = 0; c < chOut; ++c) out[f * chOut + c] = v;
         }
@@ -390,7 +402,11 @@ struct Control {
               {"bass", engine.bassDb.load()},
               {"mid", engine.midDb.load()},
               {"treble", engine.trebleDb.load()},
-              {"mute", engine.mute.load()}}},
+              {"mute", engine.mute.load()},
+              {"metroOn", engine.metroOn.load()},
+              {"metroBpm", engine.metroBpm.load()},
+              {"metroBeats", engine.metroBeats.load()},
+              {"metroVol", engine.metroVol.load()}}},
             {"model", engine.modelName},
             {"ir", engine.irName},
             {"models", models},
@@ -426,6 +442,10 @@ struct Control {
             else if (id == "mid") { engine.midDb.store(std::clamp(v, -12.0f, 12.0f)); engine.toneDirty.store(true); }
             else if (id == "treble") { engine.trebleDb.store(std::clamp(v, -12.0f, 12.0f)); engine.toneDirty.store(true); }
             else if (id == "mute") engine.mute.store(v != 0.0f);
+            else if (id == "metroOn") engine.metroOn.store(v != 0.0f);
+            else if (id == "metroBpm") engine.metroBpm.store(std::clamp(v, 30.0f, 300.0f));
+            else if (id == "metroBeats") engine.metroBeats.store(std::clamp(static_cast<int>(v), 1, 8));
+            else if (id == "metroVol") engine.metroVol.store(std::clamp(v, 0.0f, 2.0f));
             else return {{"type", "error"}, {"message", "unknown param: " + id}};
             *changed = true;
             return stateJson();

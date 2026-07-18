@@ -50,6 +50,10 @@
   #muteBtn { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
              border-radius: 8px; padding: 0.6rem 1.4rem; cursor: pointer; }
   #muteBtn.muted { border-color: var(--bad); color: var(--bad); }
+  #metroBtn { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+              border-radius: 8px; padding: 0.6rem 1.2rem; cursor: pointer; min-width: 6.5rem; }
+  #metroBtn.on { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 8px #e0a45833; }
+  input[type="range"] { accent-color: var(--accent); }
   #offline { display: none; text-align: center; padding: 2rem 0; color: var(--dim); }
   #offline.show { display: block; }
   #panel.hidden { display: none; }
@@ -77,6 +81,25 @@
     <div class="section">
       <h2>Controls</h2>
       <div class="knobs" id="knobs"></div>
+    </div>
+
+    <div class="section">
+      <h2>Metronome</h2>
+      <div style="display: flex; gap: 1.4rem; align-items: center; flex-wrap: wrap;">
+        <button id="metroBtn">▶ START</button>
+        <div style="flex: 1 1 12rem; min-width: 10rem;">
+          <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--dim);">
+            <span>TEMPO</span><span id="bpmVal" style="color: var(--accent);">120 BPM</span>
+          </div>
+          <input type="range" id="bpmSlider" min="30" max="300" step="1" value="120" style="width: 100%;">
+        </div>
+        <label style="font-size: 0.75rem; color: var(--dim);">BEATS
+          <select id="beatsSel" style="width: 4rem; margin-left: 0.4rem;">
+            <option>2</option><option>3</option><option selected>4</option><option>6</option><option>8</option>
+          </select>
+        </label>
+        <div id="metroKnob"></div>
+      </div>
     </div>
 
     <div class="row">
@@ -108,6 +131,7 @@ const PARAMS = [
   { id: "mid",     label: "MID",    min: -12,  max: 12, def: 0, fmt: v => (v > 0 ? "+" : "") + v.toFixed(1) },
   { id: "treble",  label: "TREBLE", min: -12,  max: 12, def: 0, fmt: v => (v > 0 ? "+" : "") + v.toFixed(1) },
   { id: "gainOut", label: "VOLUME", min: 0,    max: 4,  def: 1, fmt: v => v.toFixed(2) },
+  { id: "metroVol", label: "CLICK", min: 0,    max: 2,  def: 0.5, fmt: v => v.toFixed(2), mount: "metroKnob" },
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -174,7 +198,7 @@ function makeKnob(p) {
   knobEls[p.id] = setVisual;
   return wrap;
 }
-PARAMS.forEach(p => $("knobs").appendChild(makeKnob(p)));
+PARAMS.forEach(p => $(p.mount || "knobs").appendChild(makeKnob(p)));
 
 function queueParam(id, value) {
   sendQueue[id] = value;
@@ -223,6 +247,16 @@ function applyState(msg) {
     }
   }
   sel.value = state.ir;
+  // metronome
+  const mb = $("metroBtn");
+  mb.textContent = msg.params.metroOn ? "■ STOP" : "▶ START";
+  mb.className = msg.params.metroOn ? "on" : "";
+  state.params.metroOn = msg.params.metroOn;
+  if (document.activeElement !== $("bpmSlider")) {
+    $("bpmSlider").value = msg.params.metroBpm;
+    $("bpmVal").textContent = `${Math.round(msg.params.metroBpm)} BPM`;
+  }
+  $("beatsSel").value = String(msg.params.metroBeats);
   // mute + engine info
   $("muteBtn").className = msg.params.mute ? "muted" : "";
   $("muteBtn").textContent = msg.params.mute ? "UNMUTE" : "MUTE";
@@ -236,6 +270,15 @@ function applyState(msg) {
 
 $("irSel").addEventListener("change", (e) =>
   ws && ws.send(JSON.stringify({ type: "setIr", name: e.target.value })));
+$("metroBtn").addEventListener("click", () =>
+  ws && ws.send(JSON.stringify({ type: "setParam", id: "metroOn", value: state.params.metroOn ? 0 : 1 })));
+$("bpmSlider").addEventListener("input", (e) => {
+  const v = Number(e.target.value);
+  $("bpmVal").textContent = `${v} BPM`;
+  queueParam("metroBpm", v);
+});
+$("beatsSel").addEventListener("change", (e) =>
+  ws && ws.send(JSON.stringify({ type: "setParam", id: "metroBeats", value: Number(e.target.value) })));
 $("muteBtn").addEventListener("click", () =>
   ws && ws.send(JSON.stringify({ type: "setParam", id: "mute", value: state.params.mute ? 0 : 1 })));
 

@@ -92,4 +92,41 @@ struct NoiseGate {
     void reset() { env = 0; gain = 1; }
 };
 
+// Sample-accurate metronome click: decaying sine, accented beat 1.
+// Runs entirely on the audio thread; caller feeds params each block.
+struct Metronome {
+    float sr = 48000;
+    double phase = 0, phaseInc = 0;
+    float env = 0, decay = 0;
+    long long samplesToNext = 0;
+    int beat = -1;
+    bool wasOn = false;
+
+    void configure(float sampleRate) {
+        sr = sampleRate;
+        decay = std::exp(-1.0f / (0.025f * sr));  // ~25 ms click tail
+    }
+    // Call once per block before the sample loop.
+    void blockStart(bool on) {
+        if (on && !wasOn) { beat = -1; samplesToNext = 0; env = 0; }  // restart on accent
+        wasOn = on;
+    }
+    float process(bool on, float bpm, int beatsPerBar) {
+        if (!on) { env = 0; return 0.0f; }
+        if (--samplesToNext <= 0) {
+            samplesToNext = static_cast<long long>(sr * 60.0f / std::max(30.0f, bpm));
+            beat = (beat + 1) % std::max(1, beatsPerBar);
+            const float freq = (beat == 0) ? 1600.0f : 1100.0f;
+            phaseInc = 2.0 * 3.14159265358979 * freq / sr;
+            phase = 0;
+            env = (beat == 0) ? 1.0f : 0.7f;
+        }
+        if (env < 1e-4f) return 0.0f;
+        const float s = static_cast<float>(std::sin(phase)) * env;
+        phase += phaseInc;
+        env *= decay;
+        return s;
+    }
+};
+
 }  // namespace webamp

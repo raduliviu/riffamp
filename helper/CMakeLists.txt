@@ -91,9 +91,25 @@ target_include_directories(p1b PRIVATE "${drlibs_SOURCE_DIR}")
 # which the linker would otherwise drop from a static lib.
 target_link_libraries(p1b PRIVATE portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver)
 
-add_executable(webamp-helper src/helper.cpp)
-target_include_directories(webamp-helper PRIVATE "${drlibs_SOURCE_DIR}")
+# Embed the web UI into the helper so it serves its own page.
+set(WEB_UI_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/web_ui.h")
+add_custom_command(
+  OUTPUT "${WEB_UI_HEADER}"
+  COMMAND ${CMAKE_COMMAND}
+          -DIN=${CMAKE_CURRENT_SOURCE_DIR}/../web/index.html
+          -DOUT=${WEB_UI_HEADER} -DSYMBOL=kWebUiHtml
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../web/index.html"
+          "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake"
+)
+
+add_executable(webamp-helper src/helper.cpp "${WEB_UI_HEADER}")
+target_include_directories(webamp-helper PRIVATE
+  "${drlibs_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(webamp-helper PRIVATE
-  portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver ixwebsocket)
+  portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver ixwebsocket
+  user32 shell32)
+# Tray app: windows subsystem (no console) but keep main() as the entry point.
+target_link_options(webamp-helper PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:mainCRTStartup")
 
 

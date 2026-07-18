@@ -21,7 +21,7 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` done
 
 ## P3 — Productize *(split into real tasks when P2 lands; blocked by 3, 6)*
 
-- [ ] Tray app (icon, autostart option, clean uninstall)
+- [x] **P3a: Tray app** — DONE 2026-07-18. `webamp-helper.exe` is now a self-contained tray app: WIN32 subsystem (no console; logs to `webamp-helper.log` beside the exe), **serves its own UI** at `http://127.0.0.1:43718` (index.html embedded at build time via `cmake/embed_file.cmake`; WS stays on 43717), tray menu Open webamp / Toggle mute / Quit (graceful shutdown), assets default to `<exe>\assets` (`--assets` overrides), MessageBox on fatal errors. Verified: served page byte-identical to source, 404 on other paths, ws_test 15/15 against the tray build, file:// origin rejected. *Manual check pending: tray icon/menu UX (user).* Remaining tray polish → installer task: custom icon (currently stock), autostart option.
 - [ ] Installer (Inno Setup) + signing decision (SmartScreen vs Azure Trusted Signing ~$10/mo vs SignPath OSS)
 - [ ] Presets; integrate the existing metronome ([`../metronome/`](../metronome/))
 - [ ] Real UI design

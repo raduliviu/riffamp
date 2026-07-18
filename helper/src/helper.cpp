@@ -39,19 +39,93 @@
 #include "json.hpp"
 #include "dsp_extra.h"
 
+#include <ixwebsocket/IXHttpServer.h>
 #include <ixwebsocket/IXWebSocketServer.h>
 
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
+
+#include <windows.h>
+#include <shellapi.h>
+#include "web_ui.h"  // generated: kWebUiHtml[], kWebUiHtml_len
 
 namespace fs = std::filesystem;
 using nlohmann::json;
 
 namespace {
 
-constexpr const char* kVersion = "0.1.0";
+constexpr const char* kVersion = "0.2.0";
 constexpr const char* kDeviceMatch = "komplete";
 constexpr size_t kTailBlock = 1024;
+constexpr int kUiPort = 43718;
+constexpr const char* kUiUrl = "http://127.0.0.1:43718";
+
+std::atomic<bool> gRunning{true};
+std::function<void()> gToggleMute;  // set in main; called from the tray thread
+
+// ---- tray icon ---------------------------------------------------------------
+constexpr UINT kTrayMsg = WM_APP + 1;
+constexpr UINT kCmdOpen = 1, kCmdMute = 2, kCmdQuit = 3;
+
+LRESULT CALLBACK trayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == kTrayMsg) {
+        if (lp == WM_LBUTTONDBLCLK) ShellExecuteA(nullptr, "open", kUiUrl, nullptr, nullptr, SW_SHOWNORMAL);
+        else if (lp == WM_RBUTTONUP) {
+            HMENU menu = CreatePopupMenu();
+            AppendMenuA(menu, MF_STRING, kCmdOpen, "Open webamp");
+            AppendMenuA(menu, MF_STRING, kCmdMute, "Toggle mute");
+            AppendMenuA(menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuA(menu, MF_STRING, kCmdQuit, "Quit");
+            POINT pt;
+            GetCursorPos(&pt);
+            SetForegroundWindow(hwnd);  // required or the menu won't dismiss
+            TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
+            DestroyMenu(menu);
+        }
+        return 0;
+    }
+    if (msg == WM_COMMAND) {
+        switch (LOWORD(wp)) {
+            case kCmdOpen: ShellExecuteA(nullptr, "open", kUiUrl, nullptr, nullptr, SW_SHOWNORMAL); break;
+            case kCmdMute: if (gToggleMute) gToggleMute(); break;
+            case kCmdQuit: gRunning.store(false); PostQuitMessage(0); break;
+        }
+        return 0;
+    }
+    return DefWindowProcA(hwnd, msg, wp, lp);
+}
+
+void trayThread() {
+    WNDCLASSA wc{};
+    wc.lpfnWndProc = trayWndProc;
+    wc.hInstance = GetModuleHandleA(nullptr);
+    wc.lpszClassName = "webampTray";
+    RegisterClassA(&wc);
+    HWND hwnd = CreateWindowA("webampTray", "", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                              wc.hInstance, nullptr);
+    NOTIFYICONDATAA nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = hwnd;
+    nid.uID = 1;
+    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    nid.uCallbackMessage = kTrayMsg;
+    nid.hIcon = LoadIconA(nullptr, IDI_APPLICATION);
+    lstrcpynA(nid.szTip, "webamp engine — double-click to open", sizeof(nid.szTip));
+    Shell_NotifyIconA(NIM_ADD, &nid);
+
+    MSG msg;
+    while (GetMessageA(&msg, nullptr, 0, 0) > 0 && gRunning.load()) {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+    Shell_NotifyIconA(NIM_DELETE, &nid);
+}
+
+fs::path exeDir() {
+    char buf[MAX_PATH];
+    GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    return fs::path(buf).parent_path();
+}
 
 struct Options {
     std::string assets;
@@ -341,8 +415,15 @@ bool findDevices(const Options& opt, int* inDev, int* outDev) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    setvbuf(stdout, nullptr, _IONBF, 0);  // service-style logging: no buffering
+    // No console in WIN32 subsystem: log to a file next to the exe.
+    const fs::path logPath = exeDir() / "webamp-helper.log";
+    freopen(logPath.string().c_str(), "w", stdout);
+    freopen(logPath.string().c_str(), "a", stderr);
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    setvbuf(stderr, nullptr, _IONBF, 0);
+
     Engine engine;
+    engine.opt.assets = (exeDir() / "assets").string();  // default; --assets overrides
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&](const char* what) -> const char* {
@@ -357,19 +438,22 @@ int main(int argc, char** argv) {
         else if (a == "--in-ch") engine.opt.inCh = std::atoi(next("--in-ch"));
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
-    if (engine.opt.assets.empty()) {
-        std::fprintf(stderr, "--assets <dir with .nam and .wav files> is required\n");
-        return 2;
-    }
+    auto fatal = [](const std::string& m) {
+        std::fprintf(stderr, "FATAL: %s\n", m.c_str());
+        MessageBoxA(nullptr, m.c_str(), "webamp engine", MB_ICONERROR | MB_OK);
+        return 1;
+    };
+    if (!fs::is_directory(engine.opt.assets))
+        return fatal("Assets folder not found: " + engine.opt.assets +
+                     "\n\nPut your .nam models and .wav IRs there, or pass --assets <dir>.");
     engine.initBuffers();
 
     Control control{engine};
     control.assets.root = engine.opt.assets;
     control.assets.scan();
-    if (control.assets.models.empty() || control.assets.irs.empty()) {
-        std::fprintf(stderr, "assets dir needs at least one .nam and one .wav\n");
-        return 1;
-    }
+    if (control.assets.models.empty() || control.assets.irs.empty())
+        return fatal("Assets folder needs at least one .nam model and one .wav IR: " +
+                     engine.opt.assets);
     std::printf("Assets: %zu models, %zu IRs\n", control.assets.models.size(),
                 control.assets.irs.size());
     std::string err;
@@ -442,15 +526,38 @@ int main(int argc, char** argv) {
         }
     });
     auto res = server.listen();
-    if (!res.first) {
-        std::fprintf(stderr, "WS listen failed: %s\n", res.second.c_str());
-        return 1;
-    }
+    if (!res.first) return fatal("Control port busy (is webamp already running?): " + res.second);
     server.start();
-    std::printf("Control server: ws://127.0.0.1:%d (Ctrl+C to quit)\n", engine.opt.port);
+    std::printf("Control server: ws://127.0.0.1:%d\n", engine.opt.port);
 
-    // Meter broadcast loop (~15 Hz).
-    while (true) {
+    // UI server: the helper serves its own page.
+    ix::HttpServer ui(kUiPort, "127.0.0.1");
+    ui.setOnConnectionCallback(
+        [](ix::HttpRequestPtr req, std::shared_ptr<ix::ConnectionState>) -> ix::HttpResponsePtr {
+            if (req->method == "GET" && (req->uri == "/" || req->uri == "/index.html")) {
+                ix::WebSocketHttpHeaders h;
+                h["Content-Type"] = "text/html; charset=utf-8";
+                h["Cache-Control"] = "no-store";
+                return std::make_shared<ix::HttpResponse>(
+                    200, "OK", ix::HttpErrorCode::Ok, h,
+                    std::string(reinterpret_cast<const char*>(kWebUiHtml), kWebUiHtml_len));
+            }
+            return std::make_shared<ix::HttpResponse>(404, "Not Found");
+        });
+    auto uiRes = ui.listen();
+    if (!uiRes.first) return fatal("UI port busy: " + uiRes.second);
+    ui.start();
+    std::printf("UI: %s\n", kUiUrl);
+
+    gToggleMute = [&engine, &control, &server]() {
+        engine.mute.store(!engine.mute.load());
+        const std::string s = control.stateJson().dump();
+        for (auto&& client : server.getClients()) client->send(s);
+    };
+    std::thread tray(trayThread);
+
+    // Meter broadcast loop (~15 Hz) until the tray quits us.
+    while (gRunning.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(66));
         const auto clients = server.getClients();
         if (clients.empty()) continue;
@@ -460,4 +567,13 @@ int main(int argc, char** argv) {
         const std::string s = m.dump();
         for (auto&& client : clients) client->send(s);
     }
+
+    std::printf("Shutting down.\n");
+    ui.stop();
+    server.stop();
+    Pa_StopStream(stream);
+    Pa_CloseStream(stream);
+    Pa_Terminate();
+    tray.join();
+    return 0;
 }

@@ -21,6 +21,7 @@
 // or no Origin for native tools). Pairing codes: TODO with the real web UI (P2c).
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -39,6 +40,7 @@
 #include "json.hpp"
 #include "dsp_extra.h"
 #include "tuner.h"
+#include "pedals.h"
 
 #include <ixwebsocket/IXHttpServer.h>
 #include <ixwebsocket/IXWebSocketServer.h>
@@ -251,9 +253,25 @@ struct Engine {
     webamp::ToneStack tone;
     webamp::NoiseGate gate;
     webamp::Metronome metro;
+
+    // Pedalboard: fixed roster, each placeable pre/post-amp, reorderable.
+    // Defaults: comp+drive before the amp, chorus/delay/reverb after; all off.
+    webamp::CompressorPedal comp;
+    webamp::DrivePedal drivePedal;
+    webamp::ChorusPedal chorus;
+    webamp::DelayPedal delayPedal;
+    webamp::ReverbPedal reverb;
+    std::array<webamp::Pedal*, 5> pedals = {&comp, &drivePedal, &chorus, &delayPedal, &reverb};
+
     std::vector<float> bufA, bufB;
     std::atomic<float> peakIn{0.0f}, peakOut{0.0f};
     std::atomic<long> xruns{0};
+
+    webamp::Pedal* findPedal(const std::string& t) {
+        for (auto* p : pedals)
+            if (t == p->type()) return p;
+        return nullptr;
+    }
 
     // Currently loaded asset names (control thread only; guarded for state msg).
     std::mutex stateMx;
@@ -263,8 +281,16 @@ struct Engine {
     void initBuffers() {
         bufA.resize(opt.buffer);
         bufB.resize(opt.buffer);
-        gate.configure(static_cast<float>(opt.sr));
-        metro.configure(static_cast<float>(opt.sr));
+        const float sr = static_cast<float>(opt.sr);
+        gate.configure(sr);
+        metro.configure(sr);
+        for (auto* p : pedals) p->configure(sr);
+        // Default placement/order (all disabled until the user switches one on).
+        comp.placement.store(0); comp.order.store(0);
+        drivePedal.placement.store(0); drivePedal.order.store(1);
+        chorus.placement.store(1); chorus.order.store(0);
+        delayPedal.placement.store(1); delayPedal.order.store(1);
+        reverb.placement.store(1); reverb.order.store(2);
     }
 
     void process(const float* in, float* out, unsigned long frames) {
@@ -291,16 +317,35 @@ struct Engine {
         for (unsigned long f = 0; f < frames; ++f) {
             float v = in[f * chIn + inIdx] * gIn;
             pIn = std::max(pIn, std::fabs(v));
-            tunerRing[(ringBase + f) & (kRingSize - 1)] = v;  // pre-gate, for the tuner
+            tunerRing[(ringBase + f) & (kRingSize - 1)] = v;  // pre-pedal, for the tuner
             bufA[f] = gate.process(v, gateLin);
         }
         tunerPos.store(ringBase + static_cast<uint32_t>(frames), std::memory_order_release);
+
+        // Build the ordered pre/post pedal chains from atomics (<=5 items).
+        webamp::Pedal* pre[5];
+        webamp::Pedal* post[5];
+        int preN = 0, postN = 0;
+        for (auto* p : pedals) {
+            if (!p->enabled.load(std::memory_order_relaxed)) continue;
+            if (p->needReset.exchange(false, std::memory_order_relaxed)) p->reset();
+            (p->placement.load(std::memory_order_relaxed) == 0 ? pre[preN++] : post[postN++]) = p;
+        }
+        auto byOrder = [](webamp::Pedal* a, webamp::Pedal* b) {
+            return a->order.load(std::memory_order_relaxed) < b->order.load(std::memory_order_relaxed);
+        };
+        std::sort(pre, pre + preN, byOrder);
+        std::sort(post, post + postN, byOrder);
+
+        for (int k = 0; k < preN; ++k) pre[k]->processBlock(bufA.data(), static_cast<int>(frames));
 
         float* namIn = bufA.data();
         float* namOut = bufB.data();
         m->process(&namIn, &namOut, static_cast<int>(frames));
         for (unsigned long f = 0; f < frames; ++f) bufB[f] = tone.process(bufB[f]);
         cv->process(bufB.data(), bufA.data(), frames);
+
+        for (int k = 0; k < postN; ++k) post[k]->processBlock(bufA.data(), static_cast<int>(frames));
 
         const bool mOn = metroOn.load(std::memory_order_relaxed);
         const float mBpm = metroBpm.load(std::memory_order_relaxed);
@@ -403,10 +448,25 @@ struct Control {
         return true;
     }
 
+    json pedalsJson() {
+        json arr = json::array();
+        for (auto* p : engine.pedals) {
+            json params = json::object();
+            for (const auto& kv : p->paramList()) params[kv.first] = kv.second;
+            arr.push_back({{"type", p->type()},
+                           {"enabled", p->enabled.load()},
+                           {"placement", p->placement.load() == 0 ? "pre" : "post"},
+                           {"order", p->order.load()},
+                           {"params", params}});
+        }
+        return arr;
+    }
+
     json stateJson() {
         json models = json::array(), irs = json::array();
         for (const auto& p : assets.models) models.push_back(Assets::displayName(p));
         for (const auto& p : assets.irs) irs.push_back(Assets::displayName(p));
+        json pedals = pedalsJson();
         std::lock_guard<std::mutex> lk(engine.stateMx);
         return {
             {"type", "state"},
@@ -429,6 +489,7 @@ struct Control {
             {"ir", engine.irName},
             {"models", models},
             {"irs", irs},
+            {"pedals", pedals},
             {"engine",
              {{"api", engine.opt.api},
               {"sampleRate", engine.opt.sr},
@@ -467,6 +528,25 @@ struct Control {
             else if (id == "metroVol") engine.metroVol.store(std::clamp(v, 0.0f, 2.0f));
             else if (id == "tunerOn") engine.tunerOn.store(v != 0.0f);
             else return {{"type", "error"}, {"message", "unknown param: " + id}};
+            *changed = true;
+            return stateJson();
+        }
+        if (type == "setPedal") {
+            const std::string pedalType = msg.value("pedal", "");
+            const std::string field = msg.value("field", "");
+            const float v = msg.value("value", 0.0f);
+            webamp::Pedal* p = engine.findPedal(pedalType);
+            if (!p) return {{"type", "error"}, {"message", "unknown pedal: " + pedalType}};
+            if (field == "enabled") {
+                if (v != 0.0f) p->needReset.store(true);  // clear stale tails on enable
+                p->enabled.store(v != 0.0f);
+            } else if (field == "placement") {
+                p->placement.store(v != 0.0f ? 1 : 0);  // 0 = pre, 1 = post
+            } else if (field == "order") {
+                p->order.store(static_cast<int>(v));
+            } else if (!p->setParam(field, v)) {
+                return {{"type", "error"}, {"message", "unknown pedal field: " + field}};
+            }
             *changed = true;
             return stateJson();
         }

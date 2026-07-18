@@ -73,6 +73,31 @@ check("tuner messages stream", got_tuner is not None,
 state = rpc({"type": "setParam", "id": "tunerOn", "value": 0}, "state")
 check("tunerOn cleared", state["params"]["tunerOn"] is False)
 
+# 4c. pedalboard: state carries 5 pedals; setPedal toggles/params round-trip
+state = rpc({"type": "hello"}, "state")
+peds = {p["type"]: p for p in state.get("pedals", [])}
+check("5 pedals in state", set(peds) == {"comp", "drive", "chorus", "delay", "reverb"}, str(list(peds)))
+check("pedals default off", all(not p["enabled"] for p in peds.values()))
+check("drive defaults pre-amp", peds.get("drive", {}).get("placement") == "pre")
+check("reverb defaults post-amp", peds.get("reverb", {}).get("placement") == "post")
+
+state = rpc({"type": "setPedal", "pedal": "drive", "field": "enabled", "value": 1}, "state")
+dr = next(p for p in state["pedals"] if p["type"] == "drive")
+check("drive enabled via setPedal", dr["enabled"] is True)
+state = rpc({"type": "setPedal", "pedal": "drive", "field": "drive", "value": 0.8}, "state")
+dr = next(p for p in state["pedals"] if p["type"] == "drive")
+check("drive param set", abs(dr["params"]["drive"] - 0.8) < 1e-6)
+state = rpc({"type": "setPedal", "pedal": "reverb", "field": "placement", "value": 0}, "state")
+rv = next(p for p in state["pedals"] if p["type"] == "reverb")
+check("reverb moved pre-amp", rv["placement"] == "pre")
+err = rpc({"type": "setPedal", "pedal": "drive", "field": "bogus", "value": 1}, "error")
+check("unknown pedal field -> error", err.get("type") == "error")
+err = rpc({"type": "setPedal", "pedal": "nope", "field": "enabled", "value": 1}, "error")
+check("unknown pedal -> error", err.get("type") == "error")
+# restore defaults for a clean slate
+rpc({"type": "setPedal", "pedal": "drive", "field": "enabled", "value": 0}, "state")
+rpc({"type": "setPedal", "pedal": "reverb", "field": "placement", "value": 1}, "state")
+
 # 5. meters flowing
 got_meters = 0
 ws.settimeout(2)

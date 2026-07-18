@@ -110,6 +110,30 @@
   .kbd { font-size: 0.68rem; color: var(--dim); }
   .kbd kbd { background: var(--panel); border: 1px solid var(--line); border-bottom-width: 2px;
              border-radius: 5px; padding: 0.1rem 0.35rem; color: var(--text); }
+  /* pedalboard */
+  .pbZone { margin: 0.3rem 0; }
+  .pbLabel { font-size: 0.65rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); margin-bottom: 0.4rem; }
+  .pbPedals { display: flex; gap: 0.7rem; flex-wrap: wrap; min-height: 2.5rem; }
+  .pbAmp { text-align: center; font-size: 0.7rem; letter-spacing: 0.18em; color: var(--accent2);
+           padding: 0.4rem 0; opacity: 0.8; }
+  .pbEmpty { font-size: 0.75rem; color: var(--dim); font-style: italic; align-self: center; opacity: 0.6; }
+  .pedal { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 0.6rem 0.7rem;
+           min-width: 10rem; opacity: 0.55; transition: opacity 0.15s, border-color 0.15s; }
+  .pedal.on { opacity: 1; border-color: var(--accent); box-shadow: 0 0 8px rgba(59,130,246,0.15); }
+  .phead { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.5rem; }
+  .pled { width: 0.85rem; height: 0.85rem; border-radius: 50%; border: 1px solid var(--line);
+          background: var(--dot); cursor: pointer; padding: 0; flex-shrink: 0; }
+  .pedal.on .pled { background: var(--accent); box-shadow: 0 0 8px var(--accent); border-color: var(--accent); }
+  .pname { font-size: 0.72rem; letter-spacing: 0.12em; font-weight: 600; flex: 1; }
+  .pmoves { display: flex; gap: 0.2rem; }
+  .pmoves button { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+                   border-radius: 5px; font-size: 0.62rem; padding: 0.15rem 0.35rem; cursor: pointer; }
+  .pmoves button:disabled { opacity: 0.3; cursor: default; }
+  .pknobs { display: flex; gap: 0.7rem; justify-content: space-around; }
+  .pknob { display: grid; justify-items: center; gap: 0.15rem; user-select: none; touch-action: none; }
+  .pknob svg { cursor: ns-resize; }
+  .pknob .plabel { font-size: 0.58rem; letter-spacing: 0.08em; color: var(--dim); }
+  .pknob .pval { font-size: 0.62rem; color: var(--accent2); font-variant-numeric: tabular-nums; }
   /* tuner */
   #tunerBtn { background: var(--panel); color: var(--text); border: 1px solid var(--line);
               border-radius: 8px; padding: 0.6rem 1.2rem; cursor: pointer; font-size: 0.8rem;
@@ -187,6 +211,13 @@
     <div class="section">
       <h2>Controls</h2>
       <div class="knobs" id="knobs"></div>
+    </div>
+
+    <div class="section">
+      <h2>Pedalboard</h2>
+      <div class="pbZone"><div class="pbLabel">Before amp</div><div class="pbPedals" id="preZone"></div></div>
+      <div class="pbAmp">▼ AMP + CAB ▼</div>
+      <div class="pbZone"><div class="pbLabel">After amp</div><div class="pbPedals" id="postZone"></div></div>
     </div>
 
     <div class="section">
@@ -353,6 +384,7 @@ function queueParam(id, value) {
 function applyState(msg) {
   state.models = msg.models; state.irs = msg.irs;
   state.model = msg.model; state.ir = msg.ir;
+  renderPedalboard(msg.pedals);
   for (const p of PARAMS) {
     if (dragging === p.id) continue;
     state.params[p.id] = msg.params[p.id];
@@ -467,6 +499,166 @@ function tap() {
   }
   $("tapBtn").classList.add("flash");
   setTimeout(() => $("tapBtn").classList.remove("flash"), 100);
+}
+
+// ---- pedalboard ---------------------------------------------------------------
+const PEDAL_SPECS = {
+  comp:   { label: "COMP", params: [
+    { id: "threshold", label: "THRESH", min: -60, max: 0,  fmt: v => v.toFixed(0) + "dB" },
+    { id: "ratio",     label: "RATIO",  min: 1,   max: 20, fmt: v => v.toFixed(1) + ":1" },
+    { id: "makeup",    label: "GAIN",   min: 0,   max: 24, fmt: v => "+" + v.toFixed(0) } ] },
+  drive:  { label: "DRIVE", params: [
+    { id: "drive", label: "DRIVE", min: 0, max: 1, fmt: v => (v * 100).toFixed(0) },
+    { id: "tone",  label: "TONE",  min: 0, max: 1, fmt: v => (v * 100).toFixed(0) },
+    { id: "level", label: "LEVEL", min: 0, max: 1, fmt: v => (v * 100).toFixed(0) } ] },
+  chorus: { label: "CHORUS", params: [
+    { id: "rate",  label: "RATE",  min: 0, max: 1, fmt: v => (v * 100).toFixed(0) },
+    { id: "depth", label: "DEPTH", min: 0, max: 1, fmt: v => (v * 100).toFixed(0) },
+    { id: "mix",   label: "MIX",   min: 0, max: 1, fmt: v => (v * 100).toFixed(0) } ] },
+  delay:  { label: "DELAY", params: [
+    { id: "time",     label: "TIME", min: 20, max: 2000, fmt: v => v.toFixed(0) + "ms" },
+    { id: "feedback", label: "FBK",  min: 0,  max: 0.95, fmt: v => (v * 100).toFixed(0) },
+    { id: "mix",      label: "MIX",  min: 0,  max: 1,    fmt: v => (v * 100).toFixed(0) } ] },
+  reverb: { label: "REVERB", params: [
+    { id: "size", label: "SIZE", min: 0, max: 1, fmt: v => (v * 100).toFixed(0) },
+    { id: "damp", label: "DAMP", min: 0, max: 1, fmt: v => (v * 100).toFixed(0) },
+    { id: "mix",  label: "MIX",  min: 0, max: 1, fmt: v => (v * 100).toFixed(0) } ] },
+};
+
+let pedalStructSig = "";
+let pedalDragging = null;
+const pedalKnobSetters = {};
+const pedalVals = {};
+const pedalSendQueue = {};
+let pedalFlush = false;
+
+function sendPedal(pedal, field, value) {  // throttled (param knobs)
+  pedalSendQueue[`${pedal}:${field}`] = { type: "setPedal", pedal, field, value };
+  if (!pedalFlush) {
+    pedalFlush = true;
+    setTimeout(() => {
+      pedalFlush = false;
+      if (!ws || ws.readyState !== 1) return;
+      for (const m of Object.values(pedalSendQueue)) ws.send(JSON.stringify(m));
+      for (const k in pedalSendQueue) delete pedalSendQueue[k];
+    }, 33);
+  }
+}
+function sendPedalNow(pedal, field, value) {  // immediate (on/off, move)
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "setPedal", pedal, field, value }));
+}
+
+function makePedalKnob(pedalType, spec, value) {
+  const key = `${pedalType}:${spec.id}`;
+  pedalVals[key] = value;
+  const wrap = document.createElement("div");
+  wrap.className = "pknob";
+  wrap.innerHTML = `<svg width="50" height="50" viewBox="0 0 50 50">
+      <circle cx="25" cy="25" r="20" fill="var(--knob-face)" stroke="var(--line)" stroke-width="2"/>
+      <path class="arc" d="" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>
+      <line class="pointer" x1="25" y1="25" x2="25" y2="9" stroke="var(--pointer)" stroke-width="2.5" stroke-linecap="round"/>
+    </svg><div class="plabel">${spec.label}</div><div class="pval">–</div>`;
+  const svg = wrap.querySelector("svg");
+  const setVisual = (v) => {
+    pedalVals[key] = v;
+    const t = (v - spec.min) / (spec.max - spec.min);
+    const ang = -135 + t * 270;
+    wrap.querySelector(".pointer").setAttribute("transform", `rotate(${ang} 25 25)`);
+    const a0 = (-135 - 90) * Math.PI / 180, a1 = (ang - 90) * Math.PI / 180;
+    const large = ang - (-135) > 180 ? 1 : 0;
+    wrap.querySelector(".arc").setAttribute("d",
+      `M ${25 + 20 * Math.cos(a0)} ${25 + 20 * Math.sin(a0)} A 20 20 0 ${large} 1 ${25 + 20 * Math.cos(a1)} ${25 + 20 * Math.sin(a1)}`);
+    wrap.querySelector(".pval").textContent = spec.fmt(v);
+  };
+  setVisual(value);
+  pedalKnobSetters[key] = setVisual;
+  let startY = 0, startVal = 0;
+  svg.addEventListener("pointerdown", (e) => {
+    pedalDragging = key; startY = e.clientY; startVal = pedalVals[key];
+    svg.setPointerCapture(e.pointerId);
+  });
+  svg.addEventListener("pointermove", (e) => {
+    if (pedalDragging !== key) return;
+    const v = Math.min(spec.max, Math.max(spec.min, startVal + (startY - e.clientY) * (spec.max - spec.min) / 150));
+    setVisual(v); sendPedal(pedalType, spec.id, v);
+  });
+  const end = () => { if (pedalDragging === key) pedalDragging = null; };
+  svg.addEventListener("pointerup", end);
+  svg.addEventListener("pointercancel", end);
+  svg.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const step = (spec.max - spec.min) / 100;
+    const v = Math.min(spec.max, Math.max(spec.min, pedalVals[key] - Math.sign(e.deltaY) * step * 4));
+    setVisual(v); sendPedal(pedalType, spec.id, v);
+  }, { passive: false });
+  return wrap;
+}
+
+function pedalCard(p, group, index) {
+  const spec = PEDAL_SPECS[p.type];
+  const card = document.createElement("div");
+  card.className = "pedal" + (p.enabled ? " on" : "");
+  const head = document.createElement("div");
+  head.className = "phead";
+  const led = document.createElement("button");
+  led.className = "pled"; led.title = "On / off";
+  led.onclick = () => sendPedalNow(p.type, "enabled", p.enabled ? 0 : 1);
+  const name = document.createElement("span");
+  name.className = "pname"; name.textContent = spec.label;
+  const moves = document.createElement("div");
+  moves.className = "pmoves";
+  const up = document.createElement("button");
+  up.textContent = "↑"; up.title = "Earlier in chain"; up.disabled = index === 0;
+  up.onclick = () => reorderPedal(group, index, -1);
+  const down = document.createElement("button");
+  down.textContent = "↓"; down.title = "Later in chain"; down.disabled = index === group.length - 1;
+  down.onclick = () => reorderPedal(group, index, 1);
+  const across = document.createElement("button");
+  across.textContent = p.placement === "pre" ? "▽" : "△";
+  across.title = p.placement === "pre" ? "Move after amp" : "Move before amp";
+  across.onclick = () => sendPedalNow(p.type, "placement", p.placement === "pre" ? 1 : 0);
+  moves.append(up, down, across);
+  head.append(led, name, moves);
+  const knobs = document.createElement("div");
+  knobs.className = "pknobs";
+  for (const ps of spec.params) knobs.appendChild(makePedalKnob(p.type, ps, p.params[ps.id]));
+  card.append(head, knobs);
+  return card;
+}
+
+function reorderPedal(group, index, dir) {
+  const a = group[index], b = group[index + dir];
+  if (!b) return;
+  sendPedalNow(a.type, "order", b.order);
+  sendPedalNow(b.type, "order", a.order);
+}
+
+function renderPedalboard(pedals) {
+  if (!pedals) return;
+  const sig = JSON.stringify(pedals.map(p => [p.type, p.placement, p.order, p.enabled]));
+  if (sig === pedalStructSig) {
+    for (const p of pedals)
+      for (const [name, val] of Object.entries(p.params)) {
+        const key = `${p.type}:${name}`;
+        if (key !== pedalDragging && pedalKnobSetters[key]) pedalKnobSetters[key](val);
+      }
+    return;
+  }
+  pedalStructSig = sig;
+  for (const k in pedalKnobSetters) delete pedalKnobSetters[k];
+  const pre = pedals.filter(p => p.placement === "pre").sort((a, b) => a.order - b.order);
+  const post = pedals.filter(p => p.placement === "post").sort((a, b) => a.order - b.order);
+  const fill = (zone, list) => {
+    zone.innerHTML = "";
+    if (!list.length) {
+      const e = document.createElement("div");
+      e.className = "pbEmpty"; e.textContent = "no pedals here";
+      zone.appendChild(e); return;
+    }
+    list.forEach((p, i) => zone.appendChild(pedalCard(p, list, i)));
+  };
+  fill($("preZone"), pre);
+  fill($("postZone"), post);
 }
 
 // ---- tuner --------------------------------------------------------------------

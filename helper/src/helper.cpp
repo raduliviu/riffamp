@@ -95,6 +95,62 @@ LRESULT CALLBACK trayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcA(hwnd, msg, wp, lp);
 }
 
+// Renders "♪" into a 32x32 ARGB icon (UI-accent amber) — no .ico file needed.
+HICON makeNoteIcon() {
+    const int S = 32;
+    BITMAPV5HEADER bi{};
+    bi.bV5Size = sizeof(bi);
+    bi.bV5Width = S;
+    bi.bV5Height = -S;  // top-down
+    bi.bV5Planes = 1;
+    bi.bV5BitCount = 32;
+    bi.bV5Compression = BI_RGB;
+    void* bits = nullptr;
+    HDC screen = GetDC(nullptr);
+    HBITMAP dib = CreateDIBSection(screen, reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS,
+                                   &bits, nullptr, 0);
+    HDC dc = CreateCompatibleDC(screen);
+    ReleaseDC(nullptr, screen);
+    HGDIOBJ oldBmp = SelectObject(dc, dib);
+
+    RECT rc{0, 0, S, S};
+    SetBkColor(dc, RGB(0, 0, 0));
+    FillRect(dc, &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+    HFONT font = CreateFontW(34, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+                             DEFAULT_PITCH, L"Segoe UI Symbol");
+    HGDIOBJ oldFont = SelectObject(dc, font);
+    SetTextColor(dc, RGB(255, 255, 255));
+    SetBkMode(dc, TRANSPARENT);
+    DrawTextW(dc, L"♪", 1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    GdiFlush();
+
+    // Luminance -> alpha, tinted to the UI accent (#e0a458), premultiplied.
+    auto* px = static_cast<unsigned char*>(bits);
+    for (int i = 0; i < S * S; ++i) {
+        unsigned char* p = px + i * 4;  // BGRA
+        const unsigned a = std::max({p[0], p[1], p[2]});
+        p[0] = static_cast<unsigned char>(0x58 * a / 255);  // B
+        p[1] = static_cast<unsigned char>(0xA4 * a / 255);  // G
+        p[2] = static_cast<unsigned char>(0xE0 * a / 255);  // R
+        p[3] = static_cast<unsigned char>(a);
+    }
+    SelectObject(dc, oldFont);
+    DeleteObject(font);
+    SelectObject(dc, oldBmp);
+    DeleteDC(dc);
+
+    HBITMAP mask = CreateBitmap(S, S, 1, 1, nullptr);
+    ICONINFO ii{};
+    ii.fIcon = TRUE;
+    ii.hbmColor = dib;
+    ii.hbmMask = mask;
+    HICON icon = CreateIconIndirect(&ii);
+    DeleteObject(dib);
+    DeleteObject(mask);
+    return icon ? icon : LoadIconA(nullptr, IDI_APPLICATION);
+}
+
 void trayThread() {
     WNDCLASSA wc{};
     wc.lpfnWndProc = trayWndProc;
@@ -109,7 +165,7 @@ void trayThread() {
     nid.uID = 1;
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = kTrayMsg;
-    nid.hIcon = LoadIconA(nullptr, IDI_APPLICATION);
+    nid.hIcon = makeNoteIcon();
     lstrcpynA(nid.szTip, "webamp engine — double-click to open", sizeof(nid.szTip));
     Shell_NotifyIconA(NIM_ADD, &nid);
 

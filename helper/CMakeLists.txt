@@ -108,7 +108,7 @@ target_include_directories(webamp-helper PRIVATE
   "${drlibs_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(webamp-helper PRIVATE
   portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver ixwebsocket
-  user32 shell32)
+  user32 shell32 gdi32)
 # Tray app: windows subsystem (no console) but keep main() as the entry point.
 target_link_options(webamp-helper PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:mainCRTStartup")
 

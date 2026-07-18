@@ -58,6 +58,6 @@
 ## 6. Notable market intel (for future reference)
 
 - **TONE3000** is friendly territory, not a competitor: they host the models we play, their Live Input is latency-bound where we aren't, they have a public API, and they open-sourced their WASM engine (useful for our macOS path). Integration > competition.
-- **FUKKAUDIO** (Mar 2026) proved press appetite for browser guitar products — "text-to-tone in a browser" got Guitar World/MusicRadar/KVR coverage despite no customization. A "native-latency web amp" story is at least as newsworthy.
+- **FUKKAUDIO** (Mar 2026) got Guitar World/MusicRadar/KVR coverage — but the hook was the **AI text-to-tone gimmick** riding the AI news cycle, not the browser delivery (the browser made the story instantly demoable, which helped). Lesson: guitar press needs a *player-facing* hook; "native-latency web amp" is an HN/tech story. Our press-able hooks are the practice-station angles: riff history ("the amp that remembers what you played"), auto practice log, zero-pairing phone remote.
 - **openDAW** ships TONE3000 as a native device — browser DAWs are becoming NAM hosts; our helper could someday serve them as a low-latency backend (speculative).
 - **Neural PCOM / Helix hardware-preset portability** are the strongest lock-in moats in the native market — nothing for us to copy near-term, but preset portability *between webamp installs* via URL is our cheap analog.

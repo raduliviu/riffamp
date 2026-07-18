@@ -34,6 +34,7 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` done
 - [ ] **Model/IR upload from page + TONE3000 browse** (public API; 275K free captures)
 - [ ] **Looper v1** — quantized bar-snap, ~60 s, click/drum grooves (Spark 2's headline feature; absent from all browser amps)
 - [ ] **Phone-as-remote polish** — optional LAN bind + pairing security ("no pairing" vs everyone's Bluetooth pain)
+- [ ] *(parking lot, deliberately LAST — after all known features)* **AI integration survey** — candidates identified 2026-07-18: text-to-tone as a *selection* problem over the TONE3000 library (prompt → model + IR + chain preset; cheaper than FUKKAUDIO's synthesis approach), practice-coach feedback over riff history ("your timing drifted on the fast section"), auto-chord detection for play-along (Spark's killer feature; real ML work), smart preset suggestions. Prerequisites: pedalboard, presets, riff history all shipped.
 - [ ] Real UI design
 - [ ] macOS: likely **no helper needed** — in-browser WASM NAM engine (CoreAudio ≈15–25 ms); the web app picks its engine per platform
 - [ ] Auto-update strategy

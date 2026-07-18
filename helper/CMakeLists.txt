@@ -1,5 +1,5 @@
 ﻿cmake_minimum_required(VERSION 3.21)
-project(webamp-helper CXX)
+project(webamp-helper CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -103,7 +103,7 @@ add_custom_command(
           "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake"
 )
 
-add_executable(webamp-helper src/helper.cpp "${WEB_UI_HEADER}")
+add_executable(webamp-helper src/helper.cpp resources/webamp.rc "${WEB_UI_HEADER}")
 target_include_directories(webamp-helper PRIVATE
   "${drlibs_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(webamp-helper PRIVATE

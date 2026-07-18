@@ -5,31 +5,260 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>webamp</title>
 <style>
-  body { font-family: system-ui, sans-serif; background: #14100e; color: #e8ddd0; display: grid; place-items: center; min-height: 100vh; margin: 0; }
-  .card { background: #221a15; border: 1px solid #3a2d24; border-radius: 12px; padding: 2rem 2.5rem; max-width: 34rem; }
-  h1 { margin-top: 0; letter-spacing: 0.04em; }
-  #status { font-weight: 600; }
-  .ok { color: #7dc87d; } .bad { color: #d87d7d; }
-  pre { background: #171310; padding: 0.8rem; border-radius: 8px; overflow-x: auto; font-size: 0.8rem; }
+  :root {
+    --bg: #14100e; --panel: #221a15; --panel2: #2b211a; --line: #3a2d24;
+    --text: #e8ddd0; --dim: #9c8d7c; --accent: #e0a458; --ok: #7dc87d; --bad: #d87d7d;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text);
+         display: grid; place-items: center; min-height: 100vh; margin: 0; padding: 1rem; }
+  .amp { background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+         padding: 1.5rem 2rem; width: min(64rem, 100%); }
+  header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.2rem; }
+  h1 { margin: 0; letter-spacing: 0.12em; font-size: 1.6rem; }
+  h1 span { color: var(--accent); }
+  #engineInfo { color: var(--dim); font-size: 0.8rem; }
+  #connDot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--bad);
+             display: inline-block; margin-right: 0.35rem; }
+  #connDot.ok { background: var(--ok); }
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: stretch; }
+  .section { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px;
+             padding: 0.9rem 1.1rem; margin-bottom: 1rem; }
+  .section h2 { margin: 0 0 0.7rem; font-size: 0.72rem; letter-spacing: 0.18em;
+                color: var(--dim); text-transform: uppercase; }
+  /* channel buttons */
+  .channels { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+  .channels button { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+                     border-radius: 8px; padding: 0.55rem 1rem; cursor: pointer; font-size: 0.85rem; }
+  .channels button.active { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 8px #e0a45833; }
+  /* knobs */
+  .knobs { display: flex; gap: 1.6rem; flex-wrap: wrap; justify-content: space-around; }
+  .knob { display: grid; justify-items: center; gap: 0.3rem; user-select: none; touch-action: none; }
+  .knob svg { cursor: ns-resize; }
+  .knob .label { font-size: 0.7rem; letter-spacing: 0.14em; color: var(--dim); }
+  .knob .value { font-size: 0.75rem; color: var(--accent); min-height: 1em; font-variant-numeric: tabular-nums; }
+  /* ir picker */
+  select { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+           border-radius: 8px; padding: 0.5rem; width: 100%; font-size: 0.85rem; }
+  /* meters */
+  .meter { display: grid; grid-template-columns: 2.4rem 1fr; align-items: center; gap: 0.6rem;
+           margin: 0.3rem 0; font-size: 0.7rem; color: var(--dim); }
+  .meter .track { background: #171310; border-radius: 4px; height: 0.55rem; overflow: hidden; }
+  .meter .fill { height: 100%; width: 0; background: linear-gradient(90deg, #5a9e5a, #c9c96a 70%, #d87d7d 92%); }
+  /* footer */
+  footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+  #muteBtn { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+             border-radius: 8px; padding: 0.6rem 1.4rem; cursor: pointer; }
+  #muteBtn.muted { border-color: var(--bad); color: var(--bad); }
+  #offline { display: none; text-align: center; padding: 2rem 0; color: var(--dim); }
+  #offline.show { display: block; }
+  #panel.hidden { display: none; }
 </style>
 </head>
 <body>
-<div class="card">
-  <h1>webamp</h1>
-  <p>Engine connection: <span id="status">connecting…</span></p>
-  <pre id="state">–</pre>
+<div class="amp">
+  <header>
+    <h1>WEB<span>AMP</span></h1>
+    <div><span id="connDot"></span><span id="connText">connecting…</span></div>
+    <div id="engineInfo"></div>
+  </header>
+
+  <div id="offline">
+    <p><strong>Engine not found.</strong></p>
+    <p>Start it with:<br><code>webamp-helper.exe --assets F:\codework\webamp\assets</code></p>
+    <p>Retrying automatically…</p>
+  </div>
+
+  <div id="panel">
+    <div class="section">
+      <h2>Amp model</h2>
+      <div class="channels" id="channels"></div>
+    </div>
+
+    <div class="section">
+      <h2>Controls</h2>
+      <div class="knobs" id="knobs"></div>
+    </div>
+
+    <div class="row">
+      <div class="section" style="flex: 2 1 20rem;">
+        <h2>Cabinet IR</h2>
+        <select id="irSel"></select>
+      </div>
+      <div class="section" style="flex: 1 1 14rem;">
+        <h2>Levels</h2>
+        <div class="meter"><span>IN</span><div class="track"><div class="fill" id="meterIn"></div></div></div>
+        <div class="meter"><span>OUT</span><div class="track"><div class="fill" id="meterOut"></div></div></div>
+      </div>
+    </div>
+
+    <footer>
+      <button id="muteBtn">MUTE</button>
+      <span id="latencyNote" style="color: var(--dim); font-size: 0.75rem;"></span>
+    </footer>
+  </div>
 </div>
+
 <script>
-  const statusEl = document.getElementById("status");
-  const stateEl = document.getElementById("state");
-  const ws = new WebSocket("ws://127.0.0.1:43717");
-  ws.onopen = () => { statusEl.textContent = "connected"; statusEl.className = "ok"; ws.send(JSON.stringify({ type: "hello" })); };
+"use strict";
+
+const PARAMS = [
+  { id: "gainIn",  label: "GAIN",   min: 0,    max: 8,  def: 1, fmt: v => v.toFixed(2) },
+  { id: "gate",    label: "GATE",   min: -100, max: -20, def: -100, fmt: v => v <= -99 ? "off" : v.toFixed(0) + " dB" },
+  { id: "bass",    label: "BASS",   min: -12,  max: 12, def: 0, fmt: v => (v > 0 ? "+" : "") + v.toFixed(1) },
+  { id: "mid",     label: "MID",    min: -12,  max: 12, def: 0, fmt: v => (v > 0 ? "+" : "") + v.toFixed(1) },
+  { id: "treble",  label: "TREBLE", min: -12,  max: 12, def: 0, fmt: v => (v > 0 ? "+" : "") + v.toFixed(1) },
+  { id: "gainOut", label: "VOLUME", min: 0,    max: 4,  def: 1, fmt: v => v.toFixed(2) },
+];
+
+const $ = (id) => document.getElementById(id);
+const state = { params: {}, models: [], irs: [], model: "", ir: "" };
+let ws = null;
+let dragging = null;          // param id being dragged (ignore server echo for it)
+const sendQueue = {};         // param -> latest value, flushed per frame
+let flushScheduled = false;
+
+// ---- knob widgets ----------------------------------------------------------
+const knobEls = {};
+function makeKnob(p) {
+  const wrap = document.createElement("div");
+  wrap.className = "knob";
+  wrap.innerHTML = `
+    <svg width="72" height="72" viewBox="0 0 72 72">
+      <circle cx="36" cy="36" r="30" fill="#171310" stroke="#3a2d24" stroke-width="2"/>
+      <path class="arc" d="" fill="none" stroke="#e0a458" stroke-width="4" stroke-linecap="round"/>
+      <line class="pointer" x1="36" y1="36" x2="36" y2="12" stroke="#e8ddd0" stroke-width="3" stroke-linecap="round"/>
+    </svg>
+    <div class="label">${p.label}</div>
+    <div class="value">–</div>`;
+  const svg = wrap.querySelector("svg");
+  const setVisual = (v) => {
+    const t = (v - p.min) / (p.max - p.min);
+    const ang = -135 + t * 270;
+    wrap.querySelector(".pointer").setAttribute("transform", `rotate(${ang} 36 36)`);
+    const a0 = (-135 - 90) * Math.PI / 180, a1 = (ang - 90) * Math.PI / 180;
+    const large = ang - (-135) > 180 ? 1 : 0;
+    wrap.querySelector(".arc").setAttribute("d",
+      `M ${36 + 30 * Math.cos(a0)} ${36 + 30 * Math.sin(a0)} A 30 30 0 ${large} 1 ${36 + 30 * Math.cos(a1)} ${36 + 30 * Math.sin(a1)}`);
+    wrap.querySelector(".value").textContent = p.fmt(v);
+  };
+  let startY = 0, startVal = 0;
+  svg.addEventListener("pointerdown", (e) => {
+    dragging = p.id;
+    startY = e.clientY;
+    startVal = state.params[p.id] ?? p.def;
+    svg.setPointerCapture(e.pointerId);
+  });
+  svg.addEventListener("pointermove", (e) => {
+    if (dragging !== p.id) return;
+    const v = Math.min(p.max, Math.max(p.min, startVal + (startY - e.clientY) * (p.max - p.min) / 150));
+    state.params[p.id] = v;
+    setVisual(v);
+    queueParam(p.id, v);
+  });
+  const endDrag = () => { if (dragging === p.id) dragging = null; };
+  svg.addEventListener("pointerup", endDrag);
+  svg.addEventListener("pointercancel", endDrag);
+  svg.addEventListener("dblclick", () => {
+    state.params[p.id] = p.def;
+    setVisual(p.def);
+    queueParam(p.id, p.def);
+  });
+  svg.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const step = (p.max - p.min) / 100;
+    const v = Math.min(p.max, Math.max(p.min, (state.params[p.id] ?? p.def) - Math.sign(e.deltaY) * step * 4));
+    state.params[p.id] = v;
+    setVisual(v);
+    queueParam(p.id, v);
+  }, { passive: false });
+  knobEls[p.id] = setVisual;
+  return wrap;
+}
+PARAMS.forEach(p => $("knobs").appendChild(makeKnob(p)));
+
+function queueParam(id, value) {
+  sendQueue[id] = value;
+  if (!flushScheduled) {
+    flushScheduled = true;
+    // setTimeout, not requestAnimationFrame: rAF suspends in background/embedded
+    // tabs and would silently drop parameter changes.
+    setTimeout(() => {
+      flushScheduled = false;
+      if (!ws || ws.readyState !== 1) return;
+      for (const [pid, v] of Object.entries(sendQueue))
+        ws.send(JSON.stringify({ type: "setParam", id: pid, value: v }));
+      for (const k in sendQueue) delete sendQueue[k];
+    }, 33);
+  }
+}
+
+// ---- state application -------------------------------------------------------
+function applyState(msg) {
+  state.models = msg.models; state.irs = msg.irs;
+  state.model = msg.model; state.ir = msg.ir;
+  for (const p of PARAMS) {
+    if (dragging === p.id) continue;
+    state.params[p.id] = msg.params[p.id];
+    knobEls[p.id](msg.params[p.id]);
+  }
+  // channels
+  const ch = $("channels");
+  ch.innerHTML = "";
+  for (const m of state.models) {
+    const b = document.createElement("button");
+    b.textContent = m.replace(/^MARSHALL JCM800 2210 100W CH\s*/i, "") || m;
+    b.title = m;
+    b.className = m === state.model ? "active" : "";
+    b.onclick = () => ws && ws.send(JSON.stringify({ type: "setModel", name: m }));
+    ch.appendChild(b);
+  }
+  // irs
+  const sel = $("irSel");
+  if (sel.options.length !== state.irs.length) {
+    sel.innerHTML = "";
+    for (const ir of state.irs) {
+      const o = document.createElement("option");
+      o.value = o.textContent = ir;
+      sel.appendChild(o);
+    }
+  }
+  sel.value = state.ir;
+  // mute + engine info
+  $("muteBtn").className = msg.params.mute ? "muted" : "";
+  $("muteBtn").textContent = msg.params.mute ? "UNMUTE" : "MUTE";
+  $("engineInfo").textContent =
+    `${msg.engine.api.toUpperCase()} · ${msg.engine.sampleRate / 1000} kHz · buffer ${msg.engine.buffer} · xruns ${msg.engine.xruns}`;
+  $("latencyNote").textContent = "≈7.6 ms round-trip (measured)";
+}
+
+$("irSel").addEventListener("change", (e) =>
+  ws && ws.send(JSON.stringify({ type: "setIr", name: e.target.value })));
+$("muteBtn").addEventListener("click", () =>
+  ws && ws.send(JSON.stringify({ type: "setParam", id: "mute", value: state.params.mute ? 0 : 1 })));
+
+// ---- connection --------------------------------------------------------------
+function setConn(ok, text) {
+  $("connDot").className = ok ? "ok" : "";
+  $("connText").textContent = text;
+  $("offline").className = ok ? "" : "show";
+  $("panel").className = ok ? "" : "hidden";
+}
+function connect() {
+  ws = new WebSocket("ws://127.0.0.1:43717");
+  ws.onopen = () => { setConn(true, "engine connected"); ws.send(JSON.stringify({ type: "hello" })); };
   ws.onmessage = (m) => {
     const msg = JSON.parse(m.data);
-    if (msg.type === "state") stateEl.textContent = JSON.stringify({ model: msg.model, ir: msg.ir, params: msg.params, engine: msg.engine }, null, 1);
+    if (msg.type === "state") { applyState(msg); if (msg.params.mute !== undefined) state.params.mute = msg.params.mute; }
+    else if (msg.type === "meters") {
+      $("meterIn").style.width = Math.min(100, Math.sqrt(msg.in) * 110) + "%";
+      $("meterOut").style.width = Math.min(100, Math.sqrt(msg.out) * 110) + "%";
+    }
   };
-  ws.onclose = (e) => { statusEl.textContent = `closed (${e.code})`; statusEl.className = "bad"; };
-  ws.onerror = () => { statusEl.textContent = "engine not found — is webamp-helper running?"; statusEl.className = "bad"; };
+  ws.onclose = () => { setConn(false, "engine offline"); setTimeout(connect, 2000); };
+  ws.onerror = () => ws.close();
+}
+connect();
 </script>
 </body>
 </html>

@@ -244,6 +244,7 @@ struct Engine {
     // Currently loaded asset names (control thread only; guarded for state msg).
     std::mutex stateMx;
     std::string modelName, irName;
+    double repInMs = 0, repOutMs = 0;  // PortAudio-reported stream latency (estimate)
 
     void initBuffers() {
         bufA.resize(opt.buffer);
@@ -398,7 +399,10 @@ struct Control {
              {{"api", engine.opt.api},
               {"sampleRate", engine.opt.sr},
               {"buffer", engine.opt.buffer},
-              {"xruns", engine.xruns.load()}}},
+              {"xruns", engine.xruns.load()},
+              // Driver-reported estimate. ASIO drivers report honestly; WASAPI
+              // wildly overstates. Only a physical loopback measurement is truth.
+              {"reportedLatencyMs", engine.repInMs + engine.repOutMs}}},
         };
     }
 
@@ -545,6 +549,10 @@ int main(int argc, char** argv) {
     if (paErr != paNoError) {
         std::fprintf(stderr, "Pa_OpenStream: %s\n", Pa_GetErrorText(paErr));
         return 1;
+    }
+    if (const PaStreamInfo* si = Pa_GetStreamInfo(stream)) {
+        engine.repInMs = si->inputLatency * 1000.0;
+        engine.repOutMs = si->outputLatency * 1000.0;
     }
     Pa_StartStream(stream);
     std::printf("Audio running: %s, %d Hz, buffer %d — %s + %s\n", engine.opt.api.c_str(),

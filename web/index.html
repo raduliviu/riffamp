@@ -228,7 +228,10 @@ function applyState(msg) {
   $("muteBtn").textContent = msg.params.mute ? "UNMUTE" : "MUTE";
   $("engineInfo").textContent =
     `${msg.engine.api.toUpperCase()} · ${msg.engine.sampleRate / 1000} kHz · buffer ${msg.engine.buffer} · xruns ${msg.engine.xruns}`;
-  $("latencyNote").textContent = "≈7.6 ms round-trip (measured)";
+  // Driver estimate, not a measurement — true round-trip needs a loopback test.
+  const lat = msg.engine.reportedLatencyMs;
+  $("latencyNote").textContent =
+    lat > 0 ? `≈${lat.toFixed(1)} ms round-trip (driver-reported estimate)` : "";
 }
 
 $("irSel").addEventListener("change", (e) =>

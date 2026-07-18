@@ -48,6 +48,13 @@
   .groupHead:first-child { margin-top: 0; }
   .section h2 { margin: 0 0 0.7rem; font-size: 0.72rem; letter-spacing: 0.18em;
                 color: var(--dim); text-transform: uppercase; }
+  .section > h2 { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 0.45rem; }
+  .section > h2::before { content: "▾"; font-size: 0.7em; color: var(--accent2);
+                          transition: transform 0.15s; display: inline-block; }
+  .section.collapsed > h2 { margin-bottom: 0; }
+  .section.collapsed > h2::before { transform: rotate(-90deg); }
+  /* !important overrides the inline display:flex on some section bodies */
+  .section.collapsed > *:not(h2) { display: none !important; }
   /* channel buttons */
   .channels { display: flex; gap: 0.6rem; flex-wrap: wrap; }
   .channels button { background: var(--panel); color: var(--text); border: 1px solid var(--line);
@@ -777,6 +784,23 @@ function connect() {
   ws.onclose = () => { setConn(false, "engine offline"); setTimeout(connect, 2000); };
   ws.onerror = () => ws.close();
 }
+
+// ---- collapsible sections ----------------------------------------------------
+(function initCollapsibles() {
+  const collapsed = new Set(JSON.parse(localStorage.getItem("webamp:collapsed") || "[]"));
+  document.querySelectorAll("#panel .section").forEach((sec) => {
+    const h2 = sec.querySelector(":scope > h2");
+    if (!h2) return;
+    const key = h2.textContent.trim();
+    if (collapsed.has(key)) sec.classList.add("collapsed");
+    h2.addEventListener("click", () => {
+      const nowCollapsed = sec.classList.toggle("collapsed");
+      if (nowCollapsed) collapsed.add(key); else collapsed.delete(key);
+      localStorage.setItem("webamp:collapsed", JSON.stringify([...collapsed]));
+    });
+  });
+})();
+
 connect();
 </script>
 </body>

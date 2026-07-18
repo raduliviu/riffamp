@@ -475,6 +475,14 @@ bool findDevices(const Options& opt, int* inDev, int* outDev) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Single instance: a second launch just opens the UI of the running one.
+    // (Without this, Windows' SO_REUSEADDR port-sharing lets clones pile up.)
+    CreateMutexA(nullptr, TRUE, "Local\\webamp-helper-single-instance");
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        ShellExecuteA(nullptr, "open", kUiUrl, nullptr, nullptr, SW_SHOWNORMAL);
+        return 0;
+    }
+
     // No console in WIN32 subsystem: log to a file next to the exe.
     const fs::path logPath = exeDir() / "webamp-helper.log";
     freopen(logPath.string().c_str(), "w", stdout);

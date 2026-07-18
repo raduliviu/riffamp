@@ -128,7 +128,12 @@
                  transition: left 0.08s linear, background 0.1s; opacity: 0.25; }
   #centsNeedle.active { opacity: 1; }
   #centsNeedle.in-tune { background: var(--ok); }
-  .centsScale { display: flex; justify-content: space-between; font-size: 0.65rem; color: var(--dim); }
+  .centsTrack .tick { position: absolute; top: 0; height: 40%; width: 1px;
+                      background: var(--dim); opacity: 0.4; transform: translateX(-50%); }
+  .centsTrack .tick.major { height: 65%; opacity: 0.6; }
+  .centsScale { position: relative; height: 1rem; font-size: 0.65rem; color: var(--dim); }
+  .centsScale span { position: absolute; transform: translateX(-50%); }
+  #tunerFreq { text-align: center; font-size: 0.7rem; color: var(--dim); min-height: 1em; margin-top: 0.1rem; }
   #offline { display: none; text-align: center; padding: 2rem 0; color: var(--dim); }
   #offline.show { display: block; }
   #panel.hidden { display: none; }
@@ -155,11 +160,18 @@
         <button id="tunerBtn">ENABLE</button>
         <div style="flex: 1 1 16rem; min-width: 14rem;">
           <div id="tunerNote">—</div>
-          <div class="centsTrack">
+          <div class="centsTrack" id="centsTrack">
             <div class="centsCenter"></div>
             <div id="centsNeedle"></div>
           </div>
-          <div class="centsScale"><span>−50</span><span id="tunerFreq"></span><span>+50</span></div>
+          <div class="centsScale">
+            <span style="left: 0; transform: none;">−50</span>
+            <span style="left: 25%;">−25</span>
+            <span style="left: 50%;">0</span>
+            <span style="left: 75%;">+25</span>
+            <span style="left: auto; right: 0; transform: none;">+50</span>
+          </div>
+          <div id="tunerFreq"></div>
         </div>
       </div>
     </div>
@@ -455,6 +467,16 @@ function tap() {
 }
 
 // ---- tuner --------------------------------------------------------------------
+// Scale ticks: minor every 10 cents, major at ±25 to match the labels.
+(function renderTicks() {
+  const track = $("centsTrack");
+  for (const c of [-40, -30, -25, -20, -10, 10, 20, 25, 30, 40]) {
+    const t = document.createElement("div");
+    t.className = (c === -25 || c === 25) ? "tick major" : "tick";
+    t.style.left = `${50 + c}%`;
+    track.insertBefore(t, track.firstChild);  // behind center line and needle
+  }
+})();
 function updateTuner(msg) {
   const note = $("tunerNote"), needle = $("centsNeedle"), freq = $("tunerFreq");
   if (msg.freq > 0) {

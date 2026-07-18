@@ -125,14 +125,14 @@ HICON makeNoteIcon() {
     DrawTextW(dc, L"♪", 1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     GdiFlush();
 
-    // Luminance -> alpha, tinted to the UI accent (#e0a458), premultiplied.
+    // Luminance -> alpha, tinted to the UI accent (blue-500 #3b82f6), premultiplied.
     auto* px = static_cast<unsigned char*>(bits);
     for (int i = 0; i < S * S; ++i) {
         unsigned char* p = px + i * 4;  // BGRA
         const unsigned a = std::max({p[0], p[1], p[2]});
-        p[0] = static_cast<unsigned char>(0x58 * a / 255);  // B
-        p[1] = static_cast<unsigned char>(0xA4 * a / 255);  // G
-        p[2] = static_cast<unsigned char>(0xE0 * a / 255);  // R
+        p[0] = static_cast<unsigned char>(0xF6 * a / 255);  // B
+        p[1] = static_cast<unsigned char>(0x82 * a / 255);  // G
+        p[2] = static_cast<unsigned char>(0x3B * a / 255);  // R
         p[3] = static_cast<unsigned char>(a);
     }
     SelectObject(dc, oldFont);

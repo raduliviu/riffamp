@@ -72,6 +72,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(drlibs)
 
+# IXWebSocket (BSD-3) — loopback control server for the web UI.
+set(USE_TLS OFF CACHE BOOL "" FORCE)
+set(USE_ZLIB OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  ixwebsocket
+  GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
+  GIT_TAG        038e0bfc34547fa1539af4c9fc86d0bb2b8d259f
+)
+FetchContent_MakeAvailable(ixwebsocket)
+
 add_executable(p1a src/main.cpp)
 target_link_libraries(p1a PRIVATE portaudio)
 
@@ -80,5 +90,10 @@ target_include_directories(p1b PRIVATE "${drlibs_SOURCE_DIR}")
 # WHOLE_ARCHIVE: NAM's config parsers self-register via static initializers,
 # which the linker would otherwise drop from a static lib.
 target_link_libraries(p1b PRIVATE portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver)
+
+add_executable(webamp-helper src/helper.cpp)
+target_include_directories(webamp-helper PRIVATE "${drlibs_SOURCE_DIR}")
+target_link_libraries(webamp-helper PRIVATE
+  portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver ixwebsocket)
 
 

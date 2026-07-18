@@ -103,6 +103,9 @@ add_custom_command(
           "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake"
 )
 
+add_executable(tuner_test src/tuner_test.cpp)
+target_compile_features(tuner_test PRIVATE cxx_std_17)
+
 add_executable(webamp-helper src/helper.cpp resources/webamp.rc "${WEB_UI_HEADER}")
 target_include_directories(webamp-helper PRIVATE
   "${drlibs_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated")

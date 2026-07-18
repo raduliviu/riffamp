@@ -38,6 +38,7 @@
 #include "TwoStageFFTConvolver.h"
 #include "json.hpp"
 #include "dsp_extra.h"
+#include "tuner.h"
 
 #include <ixwebsocket/IXHttpServer.h>
 #include <ixwebsocket/IXWebSocketServer.h>
@@ -240,6 +241,13 @@ struct Engine {
     std::atomic<long long> beatCount{0};  // clicks fired; UI flashes on change
     std::atomic<int> beatInBar{0};
 
+    // Tuner: audio thread writes pre-gate input into a ring; control thread
+    // snapshots the last window and runs YIN on it.
+    std::atomic<bool> tunerOn{false};
+    static constexpr uint32_t kRingSize = 16384;  // power of two
+    std::vector<float> tunerRing = std::vector<float>(kRingSize, 0.0f);
+    std::atomic<uint32_t> tunerPos{0};
+
     webamp::ToneStack tone;
     webamp::NoiseGate gate;
     webamp::Metronome metro;
@@ -279,11 +287,14 @@ struct Engine {
                 : std::pow(10.0f, gateDb.load(std::memory_order_relaxed) / 20.0f);
 
         float pIn = 0.0f;
+        const uint32_t ringBase = tunerPos.load(std::memory_order_relaxed);
         for (unsigned long f = 0; f < frames; ++f) {
             float v = in[f * chIn + inIdx] * gIn;
             pIn = std::max(pIn, std::fabs(v));
+            tunerRing[(ringBase + f) & (kRingSize - 1)] = v;  // pre-gate, for the tuner
             bufA[f] = gate.process(v, gateLin);
         }
+        tunerPos.store(ringBase + static_cast<uint32_t>(frames), std::memory_order_release);
 
         float* namIn = bufA.data();
         float* namOut = bufB.data();
@@ -412,7 +423,8 @@ struct Control {
               {"metroAccent", engine.metroAccent.load()},
               {"metroBpm", engine.metroBpm.load()},
               {"metroBeats", engine.metroBeats.load()},
-              {"metroVol", engine.metroVol.load()}}},
+              {"metroVol", engine.metroVol.load()},
+              {"tunerOn", engine.tunerOn.load()}}},
             {"model", engine.modelName},
             {"ir", engine.irName},
             {"models", models},
@@ -453,6 +465,7 @@ struct Control {
             else if (id == "metroBpm") engine.metroBpm.store(std::clamp(v, 20.0f, 360.0f));
             else if (id == "metroBeats") engine.metroBeats.store(std::clamp(static_cast<int>(v), 1, 12));
             else if (id == "metroVol") engine.metroVol.store(std::clamp(v, 0.0f, 2.0f));
+            else if (id == "tunerOn") engine.tunerOn.store(v != 0.0f);
             else return {{"type", "error"}, {"message", "unknown param: " + id}};
             *changed = true;
             return stateJson();
@@ -656,10 +669,31 @@ int main(int argc, char** argv) {
     std::thread tray(trayThread);
 
     // Meter + beat broadcast loop (~25 Hz) until the tray quits us.
+    int tunerTick = 0;
+    std::vector<float> tunerWin(4096);
     while (gRunning.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
         const auto clients = server.getClients();
         if (clients.empty()) continue;
+
+        // Tuner analysis every other tick (~12 Hz) — YIN runs here, never on
+        // the audio thread.
+        if (engine.tunerOn.load(std::memory_order_relaxed) && (++tunerTick & 1) == 0) {
+            const uint32_t pos = engine.tunerPos.load(std::memory_order_acquire);
+            for (uint32_t i = 0; i < tunerWin.size(); ++i)
+                tunerWin[i] = engine.tunerRing[(pos - tunerWin.size() + i) & (Engine::kRingSize - 1)];
+            const float freq =
+                webamp::detectPitch(tunerWin.data(), static_cast<int>(tunerWin.size()),
+                                    static_cast<float>(engine.opt.sr));
+            json t = {{"type", "tuner"}, {"freq", freq}};
+            if (freq > 0) {
+                const auto info = webamp::describeNote(freq);
+                t["note"] = info.name;
+                t["cents"] = info.cents;
+            }
+            const std::string ts = t.dump();
+            for (auto&& client : clients) client->send(ts);
+        }
         const json m = {{"type", "meters"},
                         {"in", engine.peakIn.exchange(0.0f)},
                         {"out", engine.peakOut.exchange(0.0f)},

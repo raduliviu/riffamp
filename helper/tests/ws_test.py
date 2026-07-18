@@ -57,6 +57,22 @@ check("path traversal rejected", err.get("type") == "error")
 err = rpc({"type": "bogus"}, "error")
 check("unknown type -> error", err.get("type") == "error")
 
+# 4b. tuner: toggles + streams analysis messages (freq -1 on silent input)
+state = rpc({"type": "setParam", "id": "tunerOn", "value": 1}, "state")
+check("tunerOn set", state["params"]["tunerOn"] is True)
+got_tuner = None
+ws.settimeout(3)
+t0 = time.time()
+while time.time() - t0 < 2.5:
+    m = json.loads(ws.recv())
+    if m.get("type") == "tuner":
+        got_tuner = m
+        break
+check("tuner messages stream", got_tuner is not None,
+      f"freq={got_tuner and got_tuner.get('freq')}")
+state = rpc({"type": "setParam", "id": "tunerOn", "value": 0}, "state")
+check("tunerOn cleared", state["params"]["tunerOn"] is False)
+
 # 5. meters flowing
 got_meters = 0
 ws.settimeout(2)

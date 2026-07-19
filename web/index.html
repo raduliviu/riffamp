@@ -79,6 +79,9 @@
   .cabMeters { flex: 1 1 12rem; }
   .subLabel { font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
               margin-bottom: 0.35rem; }
+  .ioGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.9rem; }
+  .restartNote { margin-top: 0.8rem; padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.78rem;
+                 background: rgba(251,191,36,0.12); border: 1px solid var(--amber); color: var(--amber); }
   .meter { display: grid; grid-template-columns: 2.4rem 1fr; align-items: center; gap: 0.6rem;
            margin: 0.3rem 0; font-size: 0.7rem; color: var(--dim); }
   .meter .track { background: var(--track); border-radius: 4px; height: 0.55rem; overflow: hidden; }
@@ -256,6 +259,12 @@
     </div>
 
     <div class="section">
+      <h2>Cabinet</h2>
+      <div class="subLabel">Cabinet IR</div>
+      <select id="irSel"></select>
+    </div>
+
+    <div class="section">
       <h2>Controls</h2>
       <div class="knobs" id="knobs"></div>
     </div>
@@ -268,16 +277,25 @@
     </div>
 
     <div class="section">
-      <h2>Cabinet &amp; levels</h2>
-      <div class="cabRow">
-        <div class="cabPick">
-          <div class="subLabel">Cabinet IR</div>
-          <select id="irSel"></select>
+      <h2>Levels &amp; I/O</h2>
+      <div class="ioGrid">
+        <div>
+          <div class="subLabel">Input device</div>
+          <select id="inDevSel"></select>
         </div>
-        <div class="cabMeters">
-          <div class="meter"><span>IN</span><div class="track"><div class="fill" id="meterIn"></div></div></div>
-          <div class="meter"><span>OUT</span><div class="track"><div class="fill" id="meterOut"></div></div></div>
+        <div>
+          <div class="subLabel">Input channel (guitar)</div>
+          <select id="inChSel"></select>
         </div>
+        <div>
+          <div class="subLabel">Output device</div>
+          <select id="outDevSel"></select>
+        </div>
+      </div>
+      <div id="restartNote" class="restartNote" style="display:none;"></div>
+      <div class="cabMeters" style="margin-top: 0.9rem;">
+        <div class="meter"><span>IN</span><div class="track"><div class="fill" id="meterIn"></div></div></div>
+        <div class="meter"><span>OUT</span><div class="track"><div class="fill" id="meterOut"></div></div></div>
       </div>
     </div>
 
@@ -408,6 +426,7 @@ function applyState(msg) {
   state.models = msg.models; state.irs = msg.irs;
   state.model = msg.model; state.ir = msg.ir;
   renderPedalboard(msg.pedals);
+  renderAudio(msg.audio);
   for (const p of PARAMS) {
     if (dragging === p.id) continue;
     state.params[p.id] = msg.params[p.id];
@@ -683,6 +702,75 @@ function renderPedalboard(pedals) {
   fill($("preZone"), pre);
   fill($("postZone"), post);
 }
+
+// ---- audio I/O (device + channel selection) ----------------------------------
+let audioState = null;
+let audioDevSig = "";
+function fillDevSel(sel, devs, current) {
+  sel.innerHTML = "";
+  for (const d of devs) {
+    const o = document.createElement("option");
+    o.value = d.index; o.textContent = `${d.name} (${d.api})`;
+    sel.appendChild(o);
+  }
+  sel.value = String(current);
+}
+function renderAudio(a) {
+  if (!a) return;
+  audioState = a;
+  const sig = JSON.stringify([a.inputDevices, a.outputDevices, a.inChannels]);
+  if (sig !== audioDevSig) {
+    audioDevSig = sig;
+    fillDevSel($("inDevSel"), a.inputDevices, a.inputDevice);
+    fillDevSel($("outDevSel"), a.outputDevices, a.outputDevice);
+    const chSel = $("inChSel");
+    chSel.innerHTML = "";
+    for (let c = 1; c <= a.inChannels; c++) {
+      const o = document.createElement("option");
+      o.value = c; o.textContent = "IN " + c;
+      chSel.appendChild(o);
+    }
+  }
+  if (document.activeElement !== $("inDevSel")) $("inDevSel").value = String(a.inputDevice);
+  if (document.activeElement !== $("outDevSel")) $("outDevSel").value = String(a.outputDevice);
+  if (document.activeElement !== $("inChSel")) $("inChSel").value = String(a.inCh);
+  const note = $("restartNote");
+  if (a.pending) {
+    note.style.display = "";
+    note.textContent = `Selected ${a.pending.input} — restart webamp (tray icon → Quit, then reopen) to apply. ASIO devices switch on restart.`;
+  } else {
+    note.style.display = "none";
+  }
+}
+// ASIO is duplex (one driver = both in+out), so any valid combo is either
+// "same ASIO device on both sides" or "neither side ASIO". Coerce to keep it legal.
+function applyDeviceSelection(changed) {
+  if (!audioState || !ws || ws.readyState !== 1) return;
+  const inDevs = audioState.inputDevices, outDevs = audioState.outputDevices;
+  let inIdx = Number($("inDevSel").value), outIdx = Number($("outDevSel").value);
+  const apiOf = (devs, i) => (devs.find(d => d.index === i) || {}).api;
+  const nameOf = (devs, i) => (devs.find(d => d.index === i) || {}).name;
+  const byNameApi = (devs, name, api) => { const d = devs.find(x => x.name === name && x.api === api); return d ? d.index : null; };
+  const firstNonAsio = (devs) => { const d = devs.find(x => x.api !== "ASIO"); return d ? d.index : null; };
+  const inApi = apiOf(inDevs, inIdx), outApi = apiOf(outDevs, outIdx);
+  let m;
+  if (changed === "in" && inApi === "ASIO") {
+    if ((m = byNameApi(outDevs, nameOf(inDevs, inIdx), "ASIO")) != null) outIdx = m;   // snap output to same ASIO
+  } else if (changed === "out" && outApi === "ASIO") {
+    if ((m = byNameApi(inDevs, nameOf(outDevs, outIdx), "ASIO")) != null) inIdx = m;    // snap input to same ASIO
+  } else if (changed === "in" && outApi === "ASIO") {
+    m = byNameApi(outDevs, nameOf(inDevs, inIdx), inApi); if (m == null) m = firstNonAsio(outDevs); if (m != null) outIdx = m;  // pull output off ASIO
+  } else if (changed === "out" && inApi === "ASIO") {
+    m = byNameApi(inDevs, nameOf(outDevs, outIdx), outApi); if (m == null) m = firstNonAsio(inDevs); if (m != null) inIdx = m;  // pull input off ASIO
+  }
+  ws.send(JSON.stringify({ type: "setAudioDevice", input: inIdx, output: outIdx }));
+}
+document.addEventListener("DOMContentLoaded", () => {
+  $("inDevSel").addEventListener("change", () => applyDeviceSelection("in"));
+  $("outDevSel").addEventListener("change", () => applyDeviceSelection("out"));
+  $("inChSel").addEventListener("change", (e) =>
+    ws && ws.send(JSON.stringify({ type: "setParam", id: "inCh", value: Number(e.target.value) })));
+});
 
 // ---- tuner --------------------------------------------------------------------
 // Scale ticks: minor every 10 cents, major at ±25 to match the labels.

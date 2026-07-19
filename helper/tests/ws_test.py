@@ -98,6 +98,22 @@ check("unknown pedal -> error", err.get("type") == "error")
 rpc({"type": "setPedal", "pedal": "drive", "field": "enabled", "value": 0}, "state")
 rpc({"type": "setPedal", "pedal": "reverb", "field": "placement", "value": 1}, "state")
 
+# 4d. audio I/O: device lists + input channel selection
+state = rpc({"type": "hello"}, "state")
+audio = state.get("audio", {})
+check("audio state present", bool(audio.get("inputDevices")) and bool(audio.get("outputDevices")),
+      f"{len(audio.get('inputDevices', []))} in / {len(audio.get('outputDevices', []))} out")
+check("current input device set", audio.get("inputDevice", -1) >= 0)
+check("inChannels reported", audio.get("inChannels", 0) >= 1)
+state = rpc({"type": "setParam", "id": "inCh", "value": 1}, "state")
+check("input channel set to 1", state["audio"]["inCh"] == 1)
+state = rpc({"type": "setParam", "id": "inCh", "value": 2}, "state")
+check("input channel set to 2", state["audio"]["inCh"] == 2)
+# same-device reopen is a safe no-op (must not error or drop audio)
+ci, co = audio["inputDevice"], audio["outputDevice"]
+state = rpc({"type": "setAudioDevice", "input": ci, "output": co}, "state")
+check("same-device reopen is a no-op", state["type"] == "state" and state["audio"]["inputDevice"] == ci)
+
 # 5. meters flowing
 got_meters = 0
 ws.settimeout(2)

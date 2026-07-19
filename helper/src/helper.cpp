@@ -24,6 +24,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -225,7 +226,8 @@ std::vector<float> loadIrFile(const fs::path& path, int streamSr, std::string* e
 
 struct Engine {
     Options opt;
-    int chIn = 2, chOut = 2;
+    std::atomic<int> chIn{2}, chOut{2};   // set by AudioIO when a stream opens
+    std::atomic<int> inCh{2};             // 1-based physical input channel for the guitar
 
     // Hot-swappable processors (audio thread reads, control thread swaps).
     std::atomic<nam::DSP*> model{nullptr};
@@ -284,6 +286,7 @@ struct Engine {
         const float sr = static_cast<float>(opt.sr);
         gate.configure(sr);
         metro.configure(sr);
+        inCh.store(opt.inCh);
         for (auto* p : pedals) p->configure(sr);
         // Default placement/order (all disabled until the user switches one on).
         comp.placement.store(0); comp.order.store(0);
@@ -294,17 +297,19 @@ struct Engine {
     }
 
     void process(const float* in, float* out, unsigned long frames) {
+        const int chIn_ = chIn.load(std::memory_order_relaxed);
+        const int chOut_ = chOut.load(std::memory_order_relaxed);
         nam::DSP* m = model.load(std::memory_order_acquire);
         fftconvolver::TwoStageFFTConvolver* cv = convolver.load(std::memory_order_acquire);
         if (mute.load(std::memory_order_relaxed) || !m || !cv) {
-            std::memset(out, 0, frames * chOut * sizeof(float));
+            std::memset(out, 0, frames * chOut_ * sizeof(float));
             return;
         }
         if (toneDirty.exchange(false, std::memory_order_relaxed))
             tone.configure(static_cast<float>(opt.sr), bassDb.load(), midDb.load(),
                            trebleDb.load());
 
-        const int inIdx = std::min(opt.inCh - 1, chIn - 1);
+        const int inIdx = std::clamp(inCh.load(std::memory_order_relaxed) - 1, 0, chIn_ - 1);
         const float gIn = gainIn.load(std::memory_order_relaxed);
         const float gOut = gainOut.load(std::memory_order_relaxed);
         const float gateLin =
@@ -315,7 +320,7 @@ struct Engine {
         float pIn = 0.0f;
         const uint32_t ringBase = tunerPos.load(std::memory_order_relaxed);
         for (unsigned long f = 0; f < frames; ++f) {
-            float v = in[f * chIn + inIdx] * gIn;
+            float v = in[f * chIn_ + inIdx] * gIn;
             pIn = std::max(pIn, std::fabs(v));
             tunerRing[(ringBase + f) & (kRingSize - 1)] = v;  // pre-pedal, for the tuner
             bufA[f] = gate.process(v, gateLin);
@@ -359,7 +364,7 @@ struct Engine {
             const float click = metro.process(mOn, mBpm, mBeats, mAccent) * mVol;
             const float v = std::clamp(bufA[f] * gOut + click, -1.0f, 1.0f);
             pOut = std::max(pOut, std::fabs(v));
-            for (int c = 0; c < chOut; ++c) out[f * chOut + c] = v;
+            for (int c = 0; c < chOut_; ++c) out[f * chOut_ + c] = v;
         }
         beatCount.store(metro.clickCount, std::memory_order_relaxed);
         beatInBar.store(metro.beat, std::memory_order_relaxed);
@@ -376,12 +381,193 @@ int audioCallback(const void* input, void* output, unsigned long frames,
     if (flags & (paInputUnderflow | paInputOverflow | paOutputUnderflow | paOutputOverflow))
         e->xruns.fetch_add(1, std::memory_order_relaxed);
     if (!input || !output) {
-        if (output) std::memset(output, 0, frames * e->chOut * sizeof(float));
+        if (output) std::memset(output, 0, frames * e->chOut.load(std::memory_order_relaxed) * sizeof(float));
         return paContinue;
     }
     e->process(static_cast<const float*>(input), static_cast<float*>(output), frames);
     return paContinue;
 }
+
+// --- Audio device enumeration + stream management ----------------------------
+struct DeviceInfo {
+    int index;
+    std::string name;
+    std::string api;
+    int channels;
+};
+
+// Low-latency devices only: ASIO, WASAPI, WDM-KS (skip MME/DirectSound legacy).
+std::vector<DeviceInfo> enumerateDevices(bool wantInput) {
+    std::vector<DeviceInfo> out;
+    for (PaHostApiIndex a = 0; a < Pa_GetHostApiCount(); ++a) {
+        const PaHostApiInfo* ai = Pa_GetHostApiInfo(a);
+        std::string apiName;
+        if (ai->type == paASIO) apiName = "ASIO";
+        else if (ai->type == paWASAPI) apiName = "WASAPI";
+        else if (ai->type == paWDMKS) apiName = "WDM-KS";
+        else continue;
+        for (int i = 0; i < ai->deviceCount; ++i) {
+            const PaDeviceIndex dev = Pa_HostApiDeviceIndexToDeviceIndex(a, i);
+            const PaDeviceInfo* di = Pa_GetDeviceInfo(dev);
+            const int ch = wantInput ? di->maxInputChannels : di->maxOutputChannels;
+            if (ch <= 0) continue;
+            out.push_back({dev, di->name, apiName, ch});
+        }
+    }
+    return out;
+}
+
+std::string deviceApiName(int dev) {
+    const PaDeviceInfo* di = Pa_GetDeviceInfo(dev);
+    if (!di) return "";
+    switch (Pa_GetHostApiInfo(di->hostApi)->type) {
+        case paASIO: return "ASIO";
+        case paWASAPI: return "WASAPI";
+        case paWDMKS: return "WDM-KS";
+        default: return "?";
+    }
+}
+
+// Device identity that survives across launches (indices can shift).
+struct DeviceRef {
+    std::string name, api;
+    bool operator==(const DeviceRef& o) const { return name == o.name && api == o.api; }
+    bool empty() const { return name.empty(); }
+};
+
+int resolveDevice(const DeviceRef& ref, bool wantInput) {
+    if (ref.empty()) return -1;
+    for (const auto& d : enumerateDevices(wantInput))
+        if (d.name == ref.name && d.api == ref.api) return d.index;
+    return -1;
+}
+
+// Persisted device/channel choice, next to the exe. Applied at startup so ASIO
+// devices (which can't reliably re-init mid-process) always open exactly once.
+struct Config {
+    DeviceRef input, output;
+    int inCh = 2;
+    bool present = false;
+};
+
+Config loadConfig(const fs::path& path) {
+    Config c;
+    try {
+        std::ifstream f(path);
+        if (!f) return c;
+        json j; f >> j;
+        c.input = {j["input"].value("name", ""), j["input"].value("api", "")};
+        c.output = {j["output"].value("name", ""), j["output"].value("api", "")};
+        c.inCh = j.value("inCh", 2);
+        c.present = !c.input.empty();
+    } catch (...) {}
+    return c;
+}
+
+void saveConfig(const fs::path& path, const DeviceRef& in, const DeviceRef& out, int inCh) {
+    try {
+        const json j = {{"input", {{"name", in.name}, {"api", in.api}}},
+                        {"output", {{"name", out.name}, {"api", out.api}}},
+                        {"inCh", inCh}};
+        std::ofstream f(path);
+        f << j.dump(2);
+    } catch (...) {}
+}
+
+// Owns the PortAudio stream; can restart it on a different device from the
+// control thread while the meter loop and audio callback keep running.
+struct AudioIO {
+    Engine* engine = nullptr;
+    PaStream* stream = nullptr;
+    std::atomic<int> inputDevice{-1}, outputDevice{-1};
+    fs::path configFile;
+    DeviceRef activeIn, activeOut;   // for persistence
+    DeviceRef pendingIn, pendingOut; // a saved choice awaiting restart (live switch failed)
+    std::atomic<bool> pending{false};
+    std::mutex mx;
+
+    void persist() { saveConfig(configFile, activeIn, activeOut, engine->inCh.load()); }
+
+    bool openLocked(int inDev, int outDev, std::string* err) {
+        // Already on these devices — no-op. Avoids the ASIO "reopen the same
+        // driver" failure and needless dropouts (inCh changes don't come here).
+        if (stream && inDev == inputDevice.load() && outDev == outputDevice.load()) return true;
+
+        const int sr = engine->opt.sr, buffer = engine->opt.buffer;
+        const PaDeviceInfo* diIn = Pa_GetDeviceInfo(inDev);
+        const PaDeviceInfo* diOut = Pa_GetDeviceInfo(outDev);
+        if (!diIn || !diOut) { *err = "invalid device index"; return false; }
+        const int chIn = std::min(diIn->maxInputChannels, 8);
+        const int chOut = std::min(diOut->maxOutputChannels, 2);
+        if (chIn < 1 || chOut < 1) { *err = "device has no usable channels"; return false; }
+
+        if (stream) {
+            Pa_StopStream(stream);
+            Pa_CloseStream(stream);
+            stream = nullptr;
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));  // let ASIO release
+        }
+
+        const double lat = static_cast<double>(buffer) / sr;
+        PaStreamParameters inP{}, outP{};
+        inP.device = inDev; inP.channelCount = chIn; inP.sampleFormat = paFloat32; inP.suggestedLatency = lat;
+        outP.device = outDev; outP.channelCount = chOut; outP.sampleFormat = paFloat32; outP.suggestedLatency = lat;
+        engine->chIn.store(chIn);
+        engine->chOut.store(chOut);
+        PaStream* s = nullptr;
+        const PaError e = Pa_OpenStream(&s, &inP, &outP, sr, buffer, paNoFlag, audioCallback, engine);
+        if (e != paNoError) { *err = Pa_GetErrorText(e); return false; }
+        if (const PaStreamInfo* si = Pa_GetStreamInfo(s)) {
+            engine->repInMs = si->inputLatency * 1000.0;
+            engine->repOutMs = si->outputLatency * 1000.0;
+        }
+        Pa_StartStream(s);
+        stream = s;
+        inputDevice.store(inDev);
+        outputDevice.store(outDev);
+        activeIn = {diIn->name, deviceApiName(inDev)};
+        activeOut = {diOut->name, deviceApiName(outDev)};
+        return true;
+    }
+
+    bool open(int inDev, int outDev, std::string* err) {
+        std::lock_guard<std::mutex> lk(mx);
+        return openLocked(inDev, outDev, err);
+    }
+
+    // User picked new devices. Always persist the choice; attempt a live switch.
+    // If the live switch fails (typically ASIO re-init), keep the current device
+    // running and mark the choice pending — it applies on the next launch.
+    // Returns true if applied live, false if deferred to restart.
+    bool requestDevice(int inDev, int outDev, bool* deferred) {
+        std::lock_guard<std::mutex> lk(mx);
+        const DeviceRef reqIn = {Pa_GetDeviceInfo(inDev) ? Pa_GetDeviceInfo(inDev)->name : "",
+                                 deviceApiName(inDev)};
+        const DeviceRef reqOut = {Pa_GetDeviceInfo(outDev) ? Pa_GetDeviceInfo(outDev)->name : "",
+                                  deviceApiName(outDev)};
+        const int prevIn = inputDevice.load(), prevOut = outputDevice.load();
+        std::string err;
+        if (openLocked(inDev, outDev, &err)) {
+            pending.store(false);
+            *deferred = false;
+            saveConfig(configFile, activeIn, activeOut, engine->inCh.load());
+            return true;
+        }
+        std::string ignore;
+        openLocked(prevIn, prevOut, &ignore);  // restore audio
+        pendingIn = reqIn;
+        pendingOut = reqOut;
+        pending.store(true);
+        *deferred = true;
+        saveConfig(configFile, reqIn, reqOut, engine->inCh.load());  // apply next launch
+        return false;
+    }
+
+    void close() {
+        std::lock_guard<std::mutex> lk(mx);
+        if (stream) { Pa_StopStream(stream); Pa_CloseStream(stream); stream = nullptr; }
+    }
+};
 
 // --- Asset registry (names exposed to clients; paths stay server-side) ------
 struct Assets {
@@ -411,6 +597,7 @@ struct Assets {
 struct Control {
     Engine& engine;
     Assets assets;
+    AudioIO* audio = nullptr;
 
     bool loadModel(const fs::path& path, std::string* err) {
         try {
@@ -462,11 +649,31 @@ struct Control {
         return arr;
     }
 
+    json audioJson() {
+        json inDevs = json::array(), outDevs = json::array();
+        for (const auto& d : enumerateDevices(true))
+            inDevs.push_back({{"index", d.index}, {"name", d.name}, {"api", d.api}, {"channels", d.channels}});
+        for (const auto& d : enumerateDevices(false))
+            outDevs.push_back({{"index", d.index}, {"name", d.name}, {"api", d.api}, {"channels", d.channels}});
+        json j = {
+            {"inputDevice", audio ? audio->inputDevice.load() : -1},
+            {"outputDevice", audio ? audio->outputDevice.load() : -1},
+            {"inCh", engine.inCh.load()},
+            {"inChannels", engine.chIn.load()},
+            {"inputDevices", inDevs},
+            {"outputDevices", outDevs},
+        };
+        if (audio && audio->pending.load())
+            j["pending"] = {{"input", audio->pendingIn.name}, {"output", audio->pendingOut.name}};
+        return j;
+    }
+
     json stateJson() {
         json models = json::array(), irs = json::array();
         for (const auto& p : assets.models) models.push_back(Assets::displayName(p));
         for (const auto& p : assets.irs) irs.push_back(Assets::displayName(p));
         json pedals = pedalsJson();
+        json audio = audioJson();
         std::lock_guard<std::mutex> lk(engine.stateMx);
         return {
             {"type", "state"},
@@ -490,6 +697,7 @@ struct Control {
             {"models", models},
             {"irs", irs},
             {"pedals", pedals},
+            {"audio", audio},
             {"engine",
              {{"api", engine.opt.api},
               {"sampleRate", engine.opt.sr},
@@ -527,6 +735,10 @@ struct Control {
             else if (id == "metroBeats") engine.metroBeats.store(std::clamp(static_cast<int>(v), 1, 12));
             else if (id == "metroVol") engine.metroVol.store(std::clamp(v, 0.0f, 2.0f));
             else if (id == "tunerOn") engine.tunerOn.store(v != 0.0f);
+            else if (id == "inCh") {
+                engine.inCh.store(std::clamp(static_cast<int>(v), 1, 8));
+                if (audio) audio->persist();
+            }
             else return {{"type", "error"}, {"message", "unknown param: " + id}};
             *changed = true;
             return stateJson();
@@ -548,6 +760,15 @@ struct Control {
                 return {{"type", "error"}, {"message", "unknown pedal field: " + field}};
             }
             *changed = true;
+            return stateJson();
+        }
+        if (type == "setAudioDevice") {
+            if (!audio) return {{"type", "error"}, {"message", "audio not ready"}};
+            const int inDev = msg.value("input", static_cast<int>(audio->inputDevice.load()));
+            const int outDev = msg.value("output", static_cast<int>(audio->outputDevice.load()));
+            bool deferred = false;
+            audio->requestDevice(inDev, outDev, &deferred);
+            *changed = true;  // broadcast either way (pending flag rides in state)
             return stateJson();
         }
         if (type == "setModel" || type == "setIr") {
@@ -656,36 +877,39 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "Pa_Initialize: %s\n", Pa_GetErrorText(paErr));
         return 1;
     }
-    int inDev, outDev;
-    if (!findDevices(engine.opt, &inDev, &outDev)) {
-        std::fprintf(stderr, "audio device not found on %s\n", engine.opt.api.c_str());
-        return 1;
+    AudioIO audio;
+    audio.engine = &engine;
+    audio.configFile = exeDir() / "webamp-config.json";
+    control.audio = &audio;
+
+    // Device order of preference: saved config → the interface's ASIO driver →
+    // PortAudio defaults. Saved devices open fresh here (reliable even for ASIO).
+    int inDev = -1, outDev = -1;
+    const Config cfg = loadConfig(audio.configFile);
+    if (cfg.present) {
+        inDev = resolveDevice(cfg.input, true);
+        outDev = resolveDevice(cfg.output, false);
+        engine.inCh.store(std::clamp(cfg.inCh, 1, 8));
     }
-    const double latencySec = static_cast<double>(engine.opt.buffer) / engine.opt.sr;
-    PaStreamParameters inP{}, outP{};
-    inP.device = inDev;
-    inP.channelCount = engine.chIn;
-    inP.sampleFormat = paFloat32;
-    inP.suggestedLatency = latencySec;
-    outP.device = outDev;
-    outP.channelCount = engine.chOut;
-    outP.sampleFormat = paFloat32;
-    outP.suggestedLatency = latencySec;
-    PaStream* stream = nullptr;
-    paErr = Pa_OpenStream(&stream, &inP, &outP, engine.opt.sr, engine.opt.buffer, paNoFlag,
-                          audioCallback, &engine);
-    if (paErr != paNoError) {
-        std::fprintf(stderr, "Pa_OpenStream: %s\n", Pa_GetErrorText(paErr));
-        return 1;
+    if (inDev < 0 || outDev < 0) {
+        if (!findDevices(engine.opt, &inDev, &outDev)) {
+            inDev = Pa_GetDefaultInputDevice();
+            outDev = Pa_GetDefaultOutputDevice();
+        }
     }
-    if (const PaStreamInfo* si = Pa_GetStreamInfo(stream)) {
-        engine.repInMs = si->inputLatency * 1000.0;
-        engine.repOutMs = si->outputLatency * 1000.0;
+    std::string audioErr;
+    if (!audio.open(inDev, outDev, &audioErr)) {
+        // Saved device may be gone (unplugged); fall back to defaults.
+        if (!findDevices(engine.opt, &inDev, &outDev)) {
+            inDev = Pa_GetDefaultInputDevice();
+            outDev = Pa_GetDefaultOutputDevice();
+        }
+        if (!audio.open(inDev, outDev, &audioErr))
+            return fatal("Could not open an audio device: " + audioErr +
+                         "\n\nPlug in your interface and restart webamp.");
     }
-    Pa_StartStream(stream);
-    std::printf("Audio running: %s, %d Hz, buffer %d — %s + %s\n", engine.opt.api.c_str(),
-                engine.opt.sr, engine.opt.buffer, engine.modelName.c_str(),
-                engine.irName.c_str());
+    std::printf("Audio running: %d Hz, buffer %d — %s + %s\n", engine.opt.sr, engine.opt.buffer,
+                engine.modelName.c_str(), engine.irName.c_str());
 
     ix::initNetSystem();
     ix::WebSocketServer server(engine.opt.port, "127.0.0.1");
@@ -786,8 +1010,7 @@ int main(int argc, char** argv) {
     std::printf("Shutting down.\n");
     ui.stop();
     server.stop();
-    Pa_StopStream(stream);
-    Pa_CloseStream(stream);
+    audio.close();
     Pa_Terminate();
     tray.join();
     return 0;

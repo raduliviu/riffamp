@@ -74,6 +74,11 @@
   select { background: var(--panel); color: var(--text); border: 1px solid var(--line);
            border-radius: 8px; padding: 0.5rem; width: 100%; font-size: 0.85rem; }
   /* meters */
+  .cabRow { display: flex; gap: 1.4rem; flex-wrap: wrap; align-items: center; }
+  .cabPick { flex: 2 1 18rem; }
+  .cabMeters { flex: 1 1 12rem; }
+  .subLabel { font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
+              margin-bottom: 0.35rem; }
   .meter { display: grid; grid-template-columns: 2.4rem 1fr; align-items: center; gap: 0.6rem;
            margin: 0.3rem 0; font-size: 0.7rem; color: var(--dim); }
   .meter .track { background: var(--track); border-radius: 4px; height: 0.55rem; overflow: hidden; }
@@ -262,15 +267,17 @@
       <div class="pbZone"><div class="pbLabel">After amp</div><div class="pbPedals" id="postZone"></div></div>
     </div>
 
-    <div class="row">
-      <div class="section" style="flex: 2 1 20rem;">
-        <h2>Cabinet IR</h2>
-        <select id="irSel"></select>
-      </div>
-      <div class="section" style="flex: 1 1 14rem;">
-        <h2>Levels</h2>
-        <div class="meter"><span>IN</span><div class="track"><div class="fill" id="meterIn"></div></div></div>
-        <div class="meter"><span>OUT</span><div class="track"><div class="fill" id="meterOut"></div></div></div>
+    <div class="section">
+      <h2>Cabinet &amp; levels</h2>
+      <div class="cabRow">
+        <div class="cabPick">
+          <div class="subLabel">Cabinet IR</div>
+          <select id="irSel"></select>
+        </div>
+        <div class="cabMeters">
+          <div class="meter"><span>IN</span><div class="track"><div class="fill" id="meterIn"></div></div></div>
+          <div class="meter"><span>OUT</span><div class="track"><div class="fill" id="meterOut"></div></div></div>
+        </div>
       </div>
     </div>
 

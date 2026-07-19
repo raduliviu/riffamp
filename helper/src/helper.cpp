@@ -237,7 +237,10 @@ struct Engine {
     std::atomic<float> gainIn{1.0f}, gainOut{1.0f};
     std::atomic<float> gateDb{-100.0f};                       // <= -90 = off
     std::atomic<float> bassDb{0.0f}, midDb{0.0f}, trebleDb{0.0f};
-    std::atomic<bool> mute{false};
+    // Starts muted: the guitar path is silent until the user deliberately
+    // enables it (safety against feedback/blasts on open). Never persisted —
+    // a fresh, conscious click each launch. Metronome + tuner still work muted.
+    std::atomic<bool> mute{true};
     std::atomic<bool> toneDirty{true};
     std::atomic<bool> metroOn{false}, metroAccent{true};
     std::atomic<float> metroBpm{120.0f}, metroVol{0.5f};
@@ -301,10 +304,11 @@ struct Engine {
         const int chOut_ = chOut.load(std::memory_order_relaxed);
         nam::DSP* m = model.load(std::memory_order_acquire);
         fftconvolver::TwoStageFFTConvolver* cv = convolver.load(std::memory_order_acquire);
-        if (mute.load(std::memory_order_relaxed) || !m || !cv) {
+        if (!m || !cv) {
             std::memset(out, 0, frames * chOut_ * sizeof(float));
             return;
         }
+        const bool muted = mute.load(std::memory_order_relaxed);
         if (toneDirty.exchange(false, std::memory_order_relaxed))
             tone.configure(static_cast<float>(opt.sr), bassDb.load(), midDb.load(),
                            trebleDb.load());
@@ -320,10 +324,10 @@ struct Engine {
         float pIn = 0.0f;
         const uint32_t ringBase = tunerPos.load(std::memory_order_relaxed);
         for (unsigned long f = 0; f < frames; ++f) {
-            float v = in[f * chIn_ + inIdx] * gIn;
-            pIn = std::max(pIn, std::fabs(v));
-            tunerRing[(ringBase + f) & (kRingSize - 1)] = v;  // pre-pedal, for the tuner
-            bufA[f] = gate.process(v, gateLin);
+            const float raw = in[f * chIn_ + inIdx] * gIn;
+            pIn = std::max(pIn, std::fabs(raw));               // meter shows the real input
+            tunerRing[(ringBase + f) & (kRingSize - 1)] = raw;  // tuner works even while muted
+            bufA[f] = gate.process(muted ? 0.0f : raw, gateLin);  // amp path silent when muted
         }
         tunerPos.store(ringBase + static_cast<uint32_t>(frames), std::memory_order_release);
 

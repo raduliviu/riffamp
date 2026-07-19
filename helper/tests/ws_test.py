@@ -32,6 +32,7 @@ check("hello->state", state.get("type") == "state", f"model={state.get('model')}
 check("models listed", len(state.get("models", [])) == 3, str(state.get("models")))
 check("irs listed", len(state.get("irs", [])) == 72)
 check("engine info", state["engine"]["buffer"] == 64 and state["engine"]["sampleRate"] == 48000)
+check("input muted at startup (safety gate)", state["params"]["mute"] is True)
 
 # 2. setParam
 state = rpc({"type": "setParam", "id": "bass", "value": 6.0}, "state")
@@ -127,11 +128,13 @@ while time.time() - t0 < 1.5:
         break
 check("meters ~15Hz", got_meters >= 10, f"{got_meters} in 1.5s")
 
-# 6. panic
+# 6. panic / input gate
 state = rpc({"type": "panic"}, "state")
 check("panic mutes", state["params"]["mute"] is True)
 state = rpc({"type": "setParam", "id": "mute", "value": 0}, "state")
-check("unmute", state["params"]["mute"] is False)
+check("unmute (enable input)", state["params"]["mute"] is False)
+state = rpc({"type": "setParam", "id": "mute", "value": 1}, "state")  # restore muted default
+check("re-mute", state["params"]["mute"] is True)
 
 ws.close()
 

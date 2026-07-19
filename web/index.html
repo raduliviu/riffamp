@@ -88,9 +88,13 @@
   .meter .fill { height: 100%; width: 0; background: linear-gradient(90deg, #4ade80, #fde047 70%, #ef4444 92%); }
   /* footer */
   footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
-  #muteBtn { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
-             border-radius: 8px; padding: 0.6rem 1.4rem; cursor: pointer; }
-  #muteBtn.muted { border-color: var(--bad); color: var(--bad); }
+  /* input gate — the app opens muted; this is the deliberate enable control */
+  #inputGate { width: 100%; padding: 0.9rem; border-radius: 12px; font-size: 0.95rem; font-weight: 600;
+               letter-spacing: 0.05em; cursor: pointer; margin-bottom: 1.2rem; border: 1px solid var(--line);
+               background: var(--panel2); color: var(--text); transition: all 0.15s; }
+  #inputGate.muted { background: rgba(251,191,36,0.12); border-color: var(--amber); color: var(--amber);
+                     box-shadow: 0 0 16px rgba(251,191,36,0.3); }
+  #inputGate.live { background: rgba(74,222,128,0.08); border-color: var(--ok); color: var(--ok); }
   /* metronome (ported from the standalone metronome app, webamp palette) */
   #beatDots { display: flex; justify-content: center; gap: 0.6rem; min-height: 1rem; margin-bottom: 1rem; }
   #beatDots .dot { width: 0.9rem; height: 0.9rem; border-radius: 50%; background: var(--dot);
@@ -201,6 +205,8 @@
   </div>
 
   <div id="panel">
+    <button id="inputGate" class="muted" title="Enable or mute the guitar input">▶ CLICK TO ENABLE INPUT</button>
+
     <div class="groupHead"><span>Practice</span></div>
 
     <div class="section">
@@ -300,7 +306,6 @@
     </div>
 
     <footer>
-      <button id="muteBtn">MUTE</button>
       <span id="latencyNote" style="color: var(--dim); font-size: 0.75rem;"></span>
     </footer>
   </div>
@@ -474,9 +479,10 @@ function applyState(msg) {
     $("beatsInput").value = String(msg.params.metroBeats);
   $("accentToggle").checked = !!msg.params.metroAccent;
   renderBeatDots(msg.params.metroBeats);
-  // mute + engine info
-  $("muteBtn").className = msg.params.mute ? "muted" : "";
-  $("muteBtn").textContent = msg.params.mute ? "UNMUTE" : "MUTE";
+  // input gate + engine info
+  const muted = msg.params.mute;
+  $("inputGate").className = muted ? "muted" : "live";
+  $("inputGate").textContent = muted ? "▶ CLICK TO ENABLE INPUT" : "● INPUT LIVE — click to mute";
   $("engineInfo").textContent =
     `${msg.engine.api.toUpperCase()} · ${msg.engine.sampleRate / 1000} kHz · buffer ${msg.engine.buffer} · xruns ${msg.engine.xruns}`;
   // Driver estimate, not a measurement — true round-trip needs a loopback test.
@@ -850,7 +856,7 @@ document.addEventListener("keydown", (e) => {
   if (e.code === "Space") { e.preventDefault(); toggleMetro(); }
   else if (e.code === "KeyT") { e.preventDefault(); tap(); }
 });
-$("muteBtn").addEventListener("click", () =>
+$("inputGate").addEventListener("click", () =>
   ws && ws.send(JSON.stringify({ type: "setParam", id: "mute", value: state.params.mute ? 0 : 1 })));
 
 // ---- connection --------------------------------------------------------------

@@ -191,7 +191,7 @@ struct Options {
     std::string assets;
     std::string api = "asio";
     int port = 43717;
-    int buffer = 64;
+    int buffer = 128;  // safe default (~11 ms); 64 available for lowest latency
     int sr = 48000;
     int inCh = 2;
 };
@@ -451,6 +451,7 @@ int resolveDevice(const DeviceRef& ref, bool wantInput) {
 struct Config {
     DeviceRef input, output;
     int inCh = 2;
+    int buffer = 0;  // 0 = unspecified (use default)
     bool present = false;
 };
 
@@ -463,16 +464,18 @@ Config loadConfig(const fs::path& path) {
         c.input = {j["input"].value("name", ""), j["input"].value("api", "")};
         c.output = {j["output"].value("name", ""), j["output"].value("api", "")};
         c.inCh = j.value("inCh", 2);
+        c.buffer = j.value("buffer", 0);
         c.present = !c.input.empty();
     } catch (...) {}
     return c;
 }
 
-void saveConfig(const fs::path& path, const DeviceRef& in, const DeviceRef& out, int inCh) {
+void saveConfig(const fs::path& path, const DeviceRef& in, const DeviceRef& out, int inCh, int buffer) {
     try {
         const json j = {{"input", {{"name", in.name}, {"api", in.api}}},
                         {"output", {{"name", out.name}, {"api", out.api}}},
-                        {"inCh", inCh}};
+                        {"inCh", inCh},
+                        {"buffer", buffer}};
         std::ofstream f(path);
         f << j.dump(2);
     } catch (...) {}
@@ -488,9 +491,11 @@ struct AudioIO {
     DeviceRef activeIn, activeOut;   // for persistence
     DeviceRef pendingIn, pendingOut; // a saved choice awaiting restart (live switch failed)
     std::atomic<bool> pending{false};
+    std::atomic<int> pendingBuffer{0};  // buffer size awaiting restart (0 = none)
     std::mutex mx;
 
-    void persist() { saveConfig(configFile, activeIn, activeOut, engine->inCh.load()); }
+    int bufferToSave() { const int p = pendingBuffer.load(); return p ? p : engine->opt.buffer; }
+    void persist() { saveConfig(configFile, activeIn, activeOut, engine->inCh.load(), bufferToSave()); }
 
     bool openLocked(int inDev, int outDev, std::string* err) {
         // Already on these devices — no-op. Avoids the ASIO "reopen the same
@@ -554,7 +559,7 @@ struct AudioIO {
         if (openLocked(inDev, outDev, &err)) {
             pending.store(false);
             *deferred = false;
-            saveConfig(configFile, activeIn, activeOut, engine->inCh.load());
+            saveConfig(configFile, activeIn, activeOut, engine->inCh.load(), bufferToSave());
             return true;
         }
         std::string ignore;
@@ -563,7 +568,7 @@ struct AudioIO {
         pendingOut = reqOut;
         pending.store(true);
         *deferred = true;
-        saveConfig(configFile, reqIn, reqOut, engine->inCh.load());  // apply next launch
+        saveConfig(configFile, reqIn, reqOut, engine->inCh.load(), bufferToSave());  // apply next launch
         return false;
     }
 
@@ -664,11 +669,17 @@ struct Control {
             {"outputDevice", audio ? audio->outputDevice.load() : -1},
             {"inCh", engine.inCh.load()},
             {"inChannels", engine.chIn.load()},
+            {"buffer", engine.opt.buffer},
             {"inputDevices", inDevs},
             {"outputDevices", outDevs},
         };
-        if (audio && audio->pending.load())
-            j["pending"] = {{"input", audio->pendingIn.name}, {"output", audio->pendingOut.name}};
+        json pend = json::object();
+        if (audio && audio->pending.load()) {
+            pend["input"] = audio->pendingIn.name;
+            pend["output"] = audio->pendingOut.name;
+        }
+        if (audio && audio->pendingBuffer.load()) pend["buffer"] = audio->pendingBuffer.load();
+        if (!pend.empty()) j["pending"] = pend;
         return j;
     }
 
@@ -775,6 +786,17 @@ struct Control {
             *changed = true;  // broadcast either way (pending flag rides in state)
             return stateJson();
         }
+        if (type == "setBuffer") {
+            if (!audio) return {{"type", "error"}, {"message", "audio not ready"}};
+            const int b = msg.value("value", engine.opt.buffer);
+            if (b != 64 && b != 128 && b != 256)
+                return {{"type", "error"}, {"message", "buffer must be 64, 128, or 256"}};
+            // Buffer resize needs the DSP buffers reallocated → apply at startup.
+            audio->pendingBuffer.store(b == engine.opt.buffer ? 0 : b);
+            audio->persist();
+            *changed = true;
+            return stateJson();
+        }
         if (type == "setModel" || type == "setIr") {
             const std::string name = msg.value("name", "");
             const bool isModel = (type == "setModel");
@@ -859,6 +881,15 @@ int main(int argc, char** argv) {
     if (!fs::is_directory(engine.opt.assets))
         return fatal("Assets folder not found: " + engine.opt.assets +
                      "\n\nPut your .nam models and .wav IRs there, or pass --assets <dir>.");
+
+    // Load persisted settings before initBuffers so the buffer size takes effect
+    // (DSP buffers are sized here). Devices are resolved later (need PortAudio).
+    const fs::path configPath = exeDir() / "webamp-config.json";
+    const Config cfg = loadConfig(configPath);
+    if (cfg.present) {
+        if (cfg.buffer == 64 || cfg.buffer == 128 || cfg.buffer == 256) engine.opt.buffer = cfg.buffer;
+        engine.opt.inCh = std::clamp(cfg.inCh, 1, 8);
+    }
     engine.initBuffers();
 
     Control control{engine};
@@ -883,13 +914,12 @@ int main(int argc, char** argv) {
     }
     AudioIO audio;
     audio.engine = &engine;
-    audio.configFile = exeDir() / "webamp-config.json";
+    audio.configFile = configPath;
     control.audio = &audio;
 
     // Device order of preference: saved config → the interface's ASIO driver →
     // PortAudio defaults. Saved devices open fresh here (reliable even for ASIO).
     int inDev = -1, outDev = -1;
-    const Config cfg = loadConfig(audio.configFile);
     if (cfg.present) {
         inDev = resolveDevice(cfg.input, true);
         outDev = resolveDevice(cfg.output, false);

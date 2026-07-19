@@ -31,7 +31,7 @@ state = rpc({"type": "hello"}, "state")
 check("hello->state", state.get("type") == "state", f"model={state.get('model')}")
 check("models listed", len(state.get("models", [])) == 3, str(state.get("models")))
 check("irs listed", len(state.get("irs", [])) == 72)
-check("engine info", state["engine"]["buffer"] == 64 and state["engine"]["sampleRate"] == 48000)
+check("engine info", state["engine"]["buffer"] in (64, 128, 256) and state["engine"]["sampleRate"] == 48000)
 check("input muted at startup (safety gate)", state["params"]["mute"] is True)
 
 # 2. setParam
@@ -114,6 +114,16 @@ check("input channel set to 2", state["audio"]["inCh"] == 2)
 ci, co = audio["inputDevice"], audio["outputDevice"]
 state = rpc({"type": "setAudioDevice", "input": ci, "output": co}, "state")
 check("same-device reopen is a no-op", state["type"] == "state" and state["audio"]["inputDevice"] == ci)
+# buffer size: reported, changeable (pending until restart), validated
+cur_buf = audio["buffer"]
+check("buffer reported", cur_buf in (64, 128, 256))
+other = 256 if cur_buf != 256 else 128
+state = rpc({"type": "setBuffer", "value": other}, "state")
+check("setBuffer marks pending", state["audio"].get("pending", {}).get("buffer") == other)
+state = rpc({"type": "setBuffer", "value": cur_buf}, "state")  # back to current clears pending
+check("setBuffer to current clears pending", "buffer" not in state["audio"].get("pending", {}))
+err = rpc({"type": "setBuffer", "value": 100}, "error")
+check("invalid buffer -> error", err.get("type") == "error")
 
 # 5. meters flowing
 got_meters = 0

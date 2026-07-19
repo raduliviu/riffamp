@@ -300,6 +300,14 @@
           <div class="subLabel">Output device</div>
           <select id="outDevSel"></select>
         </div>
+        <div>
+          <div class="subLabel">Buffer size (latency vs stability)</div>
+          <select id="bufSel">
+            <option value="64">64 — lowest latency</option>
+            <option value="128">128 — recommended</option>
+            <option value="256">256 — most stable</option>
+          </select>
+        </div>
       </div>
       <div id="restartNote" class="restartNote" style="display:none;"></div>
       <div class="cabMeters" style="margin-top: 0.9rem;">
@@ -746,10 +754,16 @@ function renderAudio(a) {
   if (document.activeElement !== $("inDevSel")) $("inDevSel").value = String(a.inputDevice);
   if (document.activeElement !== $("outDevSel")) $("outDevSel").value = String(a.outputDevice);
   if (document.activeElement !== $("inChSel")) $("inChSel").value = String(a.inCh);
+  // show the pending buffer if a change is awaiting restart, else the active one
+  const shownBuf = (a.pending && a.pending.buffer) ? a.pending.buffer : a.buffer;
+  if (document.activeElement !== $("bufSel")) $("bufSel").value = String(shownBuf);
   const note = $("restartNote");
   if (a.pending) {
+    const parts = [];
+    if (a.pending.input) parts.push(`device → ${a.pending.input}`);
+    if (a.pending.buffer) parts.push(`buffer → ${a.pending.buffer} samples`);
     note.style.display = "";
-    note.textContent = `Selected ${a.pending.input} — restart webamp (tray icon → Quit, then reopen) to apply. ASIO devices switch on restart.`;
+    note.textContent = `Restart webamp (tray icon → Quit, then reopen) to apply: ${parts.join(", ")}.`;
   } else {
     note.style.display = "none";
   }
@@ -782,6 +796,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("outDevSel").addEventListener("change", () => applyDeviceSelection("out"));
   $("inChSel").addEventListener("change", (e) =>
     ws && ws.send(JSON.stringify({ type: "setParam", id: "inCh", value: Number(e.target.value) })));
+  $("bufSel").addEventListener("change", (e) =>
+    ws && ws.send(JSON.stringify({ type: "setBuffer", value: Number(e.target.value) })));
 });
 
 // ---- tuner --------------------------------------------------------------------

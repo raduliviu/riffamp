@@ -86,6 +86,9 @@
            margin: 0.3rem 0; font-size: 0.7rem; color: var(--dim); }
   .meter .track { background: var(--track); border-radius: 4px; height: 0.55rem; overflow: hidden; }
   .meter .fill { height: 100%; width: 0; background: linear-gradient(90deg, #4ade80, #fde047 70%, #ef4444 92%); }
+  .meter .fill.mon { background: linear-gradient(90deg, #b47a1e, #fbbf24); }  /* amber: monitoring while muted */
+  .monitorHint { font-size: 0.64rem; color: var(--amber); margin-top: 0.45rem; display: none; }
+  .monitorHint.show { display: block; }
   /* footer */
   footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
   /* input gate — the app opens muted; this is the deliberate enable control */
@@ -302,6 +305,7 @@
       <div class="cabMeters" style="margin-top: 0.9rem;">
         <div class="meter"><span>IN</span><div class="track"><div class="fill" id="meterIn"></div></div></div>
         <div class="meter"><span>OUT</span><div class="track"><div class="fill" id="meterOut"></div></div></div>
+        <div id="monitorHint" class="monitorHint">● Monitoring — input muted (signal seen, not passed through). Enable input to hear it.</div>
       </div>
     </div>
 
@@ -483,6 +487,8 @@ function applyState(msg) {
   const muted = msg.params.mute;
   $("inputGate").className = muted ? "muted" : "live";
   $("inputGate").textContent = muted ? "▶ CLICK TO ENABLE INPUT" : "● INPUT LIVE — click to mute";
+  $("monitorHint").className = muted ? "monitorHint show" : "monitorHint";
+  $("meterIn").className = muted ? "fill mon" : "fill";
   $("engineInfo").textContent =
     `${msg.engine.api.toUpperCase()} · ${msg.engine.sampleRate / 1000} kHz · buffer ${msg.engine.buffer} · xruns ${msg.engine.xruns}`;
   // Driver estimate, not a measurement — true round-trip needs a loopback test.

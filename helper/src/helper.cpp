@@ -278,6 +278,35 @@ struct Engine {
         return nullptr;
     }
 
+    // Serialize the current rig for persistence. Excludes transient state that
+    // should reset each launch: mute, tunerOn, and the metronome on/off flag.
+    json ampJson() {
+        json pedalsArr = json::array();
+        for (auto* p : pedals) {
+            json params = json::object();
+            for (const auto& kv : p->paramList()) params[kv.first] = kv.second;
+            pedalsArr.push_back({{"type", p->type()},
+                                 {"enabled", p->enabled.load()},
+                                 {"placement", p->placement.load()},
+                                 {"order", p->order.load()},
+                                 {"params", params}});
+        }
+        std::lock_guard<std::mutex> lk(stateMx);  // modelName / irName
+        return {{"gainIn", gainIn.load()},
+                {"gainOut", gainOut.load()},
+                {"gate", gateDb.load()},
+                {"bass", bassDb.load()},
+                {"mid", midDb.load()},
+                {"treble", trebleDb.load()},
+                {"model", modelName},
+                {"ir", irName},
+                {"metroBpm", metroBpm.load()},
+                {"metroBeats", metroBeats.load()},
+                {"metroAccent", metroAccent.load()},
+                {"metroVol", metroVol.load()},
+                {"pedals", pedalsArr}};
+    }
+
     // Currently loaded asset names (control thread only; guarded for state msg).
     std::mutex stateMx;
     std::string modelName, irName;
@@ -446,13 +475,21 @@ int resolveDevice(const DeviceRef& ref, bool wantInput) {
     return -1;
 }
 
-// Persisted device/channel choice, next to the exe. Applied at startup so ASIO
-// devices (which can't reliably re-init mid-process) always open exactly once.
+// Monotonic milliseconds, used to debounce config writes.
+static long long nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+// Persisted device/channel choice + amp rig, next to the exe. Applied at startup
+// so ASIO devices (which can't reliably re-init mid-process) always open once.
 struct Config {
     DeviceRef input, output;
     int inCh = 2;
     int buffer = 0;  // 0 = unspecified (use default)
     bool present = false;
+    json amp;  // saved rig (amp params, model/IR, pedals, metro); null if none
 };
 
 Config loadConfig(const fs::path& path) {
@@ -465,17 +502,20 @@ Config loadConfig(const fs::path& path) {
         c.output = {j["output"].value("name", ""), j["output"].value("api", "")};
         c.inCh = j.value("inCh", 2);
         c.buffer = j.value("buffer", 0);
+        if (j.contains("amp")) c.amp = j["amp"];
         c.present = !c.input.empty();
     } catch (...) {}
     return c;
 }
 
-void saveConfig(const fs::path& path, const DeviceRef& in, const DeviceRef& out, int inCh, int buffer) {
+void saveConfig(const fs::path& path, const DeviceRef& in, const DeviceRef& out, int inCh, int buffer,
+                const json& amp) {
     try {
-        const json j = {{"input", {{"name", in.name}, {"api", in.api}}},
-                        {"output", {{"name", out.name}, {"api", out.api}}},
-                        {"inCh", inCh},
-                        {"buffer", buffer}};
+        json j = {{"input", {{"name", in.name}, {"api", in.api}}},
+                  {"output", {{"name", out.name}, {"api", out.api}}},
+                  {"inCh", inCh},
+                  {"buffer", buffer}};
+        if (!amp.is_null()) j["amp"] = amp;
         std::ofstream f(path);
         f << j.dump(2);
     } catch (...) {}
@@ -495,7 +535,10 @@ struct AudioIO {
     std::mutex mx;
 
     int bufferToSave() { const int p = pendingBuffer.load(); return p ? p : engine->opt.buffer; }
-    void persist() { saveConfig(configFile, activeIn, activeOut, engine->inCh.load(), bufferToSave()); }
+    void persist() {
+        saveConfig(configFile, activeIn, activeOut, engine->inCh.load(), bufferToSave(),
+                   engine->ampJson());
+    }
 
     bool openLocked(int inDev, int outDev, std::string* err) {
         // Already on these devices — no-op. Avoids the ASIO "reopen the same
@@ -559,7 +602,8 @@ struct AudioIO {
         if (openLocked(inDev, outDev, &err)) {
             pending.store(false);
             *deferred = false;
-            saveConfig(configFile, activeIn, activeOut, engine->inCh.load(), bufferToSave());
+            saveConfig(configFile, activeIn, activeOut, engine->inCh.load(), bufferToSave(),
+                       engine->ampJson());
             return true;
         }
         std::string ignore;
@@ -568,7 +612,8 @@ struct AudioIO {
         pendingOut = reqOut;
         pending.store(true);
         *deferred = true;
-        saveConfig(configFile, reqIn, reqOut, engine->inCh.load(), bufferToSave());  // apply next launch
+        saveConfig(configFile, reqIn, reqOut, engine->inCh.load(), bufferToSave(),
+                   engine->ampJson());  // apply next launch
         return false;
     }
 
@@ -607,6 +652,58 @@ struct Control {
     Engine& engine;
     Assets assets;
     AudioIO* audio = nullptr;
+
+    // Debounced rig persistence: handlers mark the config dirty; the meter loop
+    // flushes ~400 ms after the last change so knob drags don't thrash the disk.
+    std::atomic<bool> cfgDirty{false};
+    std::atomic<long long> cfgTouchMs{0};
+    void touchConfig() {
+        cfgTouchMs.store(nowMs());
+        cfgDirty.store(true);
+    }
+
+    // Restore a saved rig over the freshly-loaded defaults (once, at startup).
+    void applyAmp(const json& a) {
+        if (!a.is_object()) return;
+        auto num = [&](const char* k, float lo, float hi, float def) {
+            return a.contains(k) && a[k].is_number() ? std::clamp(a[k].get<float>(), lo, hi) : def;
+        };
+        engine.gainIn.store(num("gainIn", 0.0f, 8.0f, engine.gainIn.load()));
+        engine.gainOut.store(num("gainOut", 0.0f, 4.0f, engine.gainOut.load()));
+        engine.gateDb.store(num("gate", -100.0f, 0.0f, engine.gateDb.load()));
+        engine.bassDb.store(num("bass", -12.0f, 12.0f, engine.bassDb.load()));
+        engine.midDb.store(num("mid", -12.0f, 12.0f, engine.midDb.load()));
+        engine.trebleDb.store(num("treble", -12.0f, 12.0f, engine.trebleDb.load()));
+        engine.toneDirty.store(true);
+        engine.metroBpm.store(num("metroBpm", 20.0f, 360.0f, engine.metroBpm.load()));
+        engine.metroBeats.store(static_cast<int>(
+            num("metroBeats", 1.0f, 12.0f, static_cast<float>(engine.metroBeats.load()))));
+        engine.metroVol.store(num("metroVol", 0.0f, 2.0f, engine.metroVol.load()));
+        if (a.contains("metroAccent") && a["metroAccent"].is_boolean())
+            engine.metroAccent.store(a["metroAccent"].get<bool>());
+
+        std::string err;
+        if (a.contains("model") && a["model"].is_string())
+            if (const fs::path* p = assets.find(assets.models, a["model"].get<std::string>()))
+                loadModel(*p, &err);
+        if (a.contains("ir") && a["ir"].is_string())
+            if (const fs::path* p = assets.find(assets.irs, a["ir"].get<std::string>()))
+                loadIr(*p, &err);
+
+        if (a.contains("pedals") && a["pedals"].is_array()) {
+            for (const auto& pj : a["pedals"]) {
+                webamp::Pedal* p = engine.findPedal(pj.value("type", ""));
+                if (!p) continue;
+                p->enabled.store(pj.value("enabled", false));
+                p->placement.store(std::clamp(pj.value("placement", 0), 0, 1));
+                p->order.store(pj.value("order", 0));
+                if (pj.contains("params") && pj["params"].is_object())
+                    for (const auto& [k, v] : pj["params"].items())
+                        if (v.is_number()) p->setParam(k, v.get<float>());
+                if (p->enabled.load()) p->needReset.store(true);
+            }
+        }
+    }
 
     bool loadModel(const fs::path& path, std::string* err) {
         try {
@@ -755,6 +852,10 @@ struct Control {
                 if (audio) audio->persist();
             }
             else return {{"type", "error"}, {"message", "unknown param: " + id}};
+            if (id == "gainIn" || id == "gainOut" || id == "gate" || id == "bass" ||
+                id == "mid" || id == "treble" || id == "metroAccent" || id == "metroBpm" ||
+                id == "metroBeats" || id == "metroVol")
+                touchConfig();  // mute / tunerOn / metroOn are deliberately not persisted
             *changed = true;
             return stateJson();
         }
@@ -774,6 +875,7 @@ struct Control {
             } else if (!p->setParam(field, v)) {
                 return {{"type", "error"}, {"message", "unknown pedal field: " + field}};
             }
+            touchConfig();
             *changed = true;
             return stateJson();
         }
@@ -805,6 +907,7 @@ struct Control {
             std::string err;
             const bool ok = isModel ? loadModel(*p, &err) : loadIr(*p, &err);
             if (!ok) return {{"type", "error"}, {"message", err}};
+            touchConfig();
             *changed = true;
             return stateJson();
         }
@@ -906,6 +1009,10 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "initial load failed: %s\n", err.c_str());
         return 1;
     }
+
+    // Restore the saved rig (amp params, model/IR, pedals, metronome) over the
+    // just-loaded defaults. Engine-side only — no audio device needed yet.
+    if (!cfg.amp.is_null()) control.applyAmp(cfg.amp);
 
     PaError paErr = Pa_Initialize();
     if (paErr != paNoError) {
@@ -1011,6 +1118,13 @@ int main(int argc, char** argv) {
     std::vector<float> tunerWin(4096);
     while (gRunning.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
+
+        // Flush the rig to disk ~400 ms after the last change (coalesces drags).
+        if (control.cfgDirty.load() && nowMs() - control.cfgTouchMs.load() > 400) {
+            control.cfgDirty.store(false);
+            audio.persist();
+        }
+
         const auto clients = server.getClients();
         if (clients.empty()) continue;
 
@@ -1040,6 +1154,8 @@ int main(int argc, char** argv) {
         const std::string s = m.dump();
         for (auto&& client : clients) client->send(s);
     }
+
+    if (control.cfgDirty.load()) audio.persist();  // flush any pending rig change
 
     std::printf("Shutting down.\n");
     ui.stop();

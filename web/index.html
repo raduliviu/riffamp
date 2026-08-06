@@ -801,11 +801,13 @@ function renderPedalboard(pedals) {
 // ---- drum machine -------------------------------------------------------------
 let drumBuilt = false;
 let drumStepShown = -1;
-const DRUM_LABELS = ["KICK", "SNARE", "CRASH", "HIHAT", "RIDE"];
+const DRUM_LABELS = ["KICK", "SNARE", "CRASH", "HIHAT", "RIDE"];   // indexed by engine voice
+const DRUM_ORDER = [2, 4, 3, 1, 0];                                // display top→bottom: crash, ride, hihat, snare, kick
 function buildDrumGrid(nVoices, nSteps) {
   const grid = $("drumGrid");
   grid.innerHTML = "";
-  for (let v = 0; v < nVoices; v++) {
+  const order = DRUM_ORDER.filter(v => v < nVoices);
+  for (const v of (order.length === nVoices ? order : [...Array(nVoices).keys()])) {
     const row = document.createElement("div");
     row.className = "drumRow";
     const label = document.createElement("div");

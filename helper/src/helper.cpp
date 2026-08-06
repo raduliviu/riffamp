@@ -664,6 +664,7 @@ struct Control {
     Assets assets;
     AudioIO* audio = nullptr;
     fs::path presetsFile;
+    fs::path drumsFile;
     json presets = json::array();  // list of preset objects, loaded at startup
 
     void loadPresetsFromDisk() {
@@ -856,18 +857,47 @@ struct Control {
     }
 
     json drumsJson() {
+        const int sc = engine.drums.stepCount();
         json rows = json::array();
         for (int v = 0; v < webamp::DrumMachine::kVoices; ++v) {
-            const uint16_t mask = engine.drums.pattern[v].load();
             json steps = json::array();
-            for (int s = 0; s < webamp::DrumMachine::kSteps; ++s) steps.push_back((mask >> s) & 1);
+            for (int s = 0; s < sc; ++s) steps.push_back(engine.drums.cell(v, s) ? 1 : 0);
             rows.push_back(steps);
         }
         return {{"on", engine.drumOn.load()},
                 {"vol", engine.drumVol.load()},
                 {"step", engine.drums.curStep.load()},
                 {"voices", {"kick", "snare", "crash", "hihat", "ride"}},
+                {"beatsPerBar", engine.drums.beatsPerBar.load()},
+                {"bars", engine.drums.bars.load()},
+                {"subdiv", engine.drums.subdiv.load()},
+                {"stepCount", sc},
                 {"pattern", rows}};
+    }
+
+    void writeDrums() {
+        try {
+            const json d = {{"beatsPerBar", engine.drums.beatsPerBar.load()},
+                            {"bars", engine.drums.bars.load()},
+                            {"subdiv", engine.drums.subdiv.load()},
+                            {"vol", engine.drumVol.load()},
+                            {"pattern", drumsJson()["pattern"]}};
+            std::ofstream f(drumsFile);
+            f << d.dump();
+        } catch (...) {}
+    }
+    void loadDrumsFromDisk() {
+        try {
+            std::ifstream f(drumsFile);
+            if (!f) return;
+            json d; f >> d;
+            engine.drums.setGrid(d.value("beatsPerBar", 4), d.value("bars", 1), d.value("subdiv", 4));
+            engine.drumVol.store(std::clamp(d.value("vol", 0.6f), 0.0f, 2.0f));
+            const json rows = d.value("pattern", json::array());
+            for (int v = 0; v < static_cast<int>(rows.size()); ++v)
+                for (int s = 0; s < static_cast<int>(rows[v].size()); ++s)
+                    if (rows[v][s].get<int>()) engine.drums.setCell(v, s, true);
+        } catch (...) {}
     }
 
     json stateJson() {
@@ -948,7 +978,7 @@ struct Control {
                 if (audio) audio->persist();
             }
             else if (id == "drumOn") engine.drumOn.store(v != 0.0f);
-            else if (id == "drumVol") engine.drumVol.store(std::clamp(v, 0.0f, 2.0f));
+            else if (id == "drumVol") { engine.drumVol.store(std::clamp(v, 0.0f, 2.0f)); writeDrums(); }
             else return {{"type", "error"}, {"message", "unknown param: " + id}};
             if (id == "gainIn" || id == "gainOut" || id == "gate" || id == "bass" ||
                 id == "mid" || id == "treble" || id == "metroAccent" || id == "metroBpm" ||
@@ -999,11 +1029,20 @@ struct Control {
         }
         if (type == "setDrumCell") {
             engine.drums.setCell(msg.value("voice", -1), msg.value("step", -1), msg.value("on", false));
+            writeDrums();
+            *changed = true;
+            return stateJson();
+        }
+        if (type == "setDrumGrid") {
+            engine.drums.setGrid(msg.value("beatsPerBar", 4), msg.value("bars", 1),
+                                 msg.value("subdiv", 4));
+            writeDrums();
             *changed = true;
             return stateJson();
         }
         if (type == "clearDrums") {
             engine.drums.clear();
+            writeDrums();
             *changed = true;
             return stateJson();
         }
@@ -1141,6 +1180,8 @@ int main(int argc, char** argv) {
     Control control{engine};
     control.presetsFile = exeDir() / "webamp-presets.json";
     control.loadPresetsFromDisk();
+    control.drumsFile = exeDir() / "webamp-drums.json";
+    control.loadDrumsFromDisk();
     control.assets.root = engine.opt.assets;
     control.assets.scan();
     if (control.assets.models.empty() || control.assets.irs.empty())

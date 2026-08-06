@@ -143,19 +143,24 @@ state = rpc({"type": "deletePreset", "name": "ws-test-rig"}, "state")
 check("preset deleted", "ws-test-rig" not in state.get("presets", []))
 rpc({"type": "setParam", "id": "treble", "value": 0.0}, "state")  # restore neutral
 
-# 4f. drum machine: 5 voices x 16 steps, cell toggle, clear, playback
-state = rpc({"type": "hello"}, "state")
-dm = state.get("drums", {})
-check("drums: 5 voices x 16 steps", len(dm.get("pattern", [])) == 5 and len(dm["pattern"][0]) == 16,
-      f"voices={dm.get('voices')}")
+# 4f. drum machine: 5 voices, selectable grid (time sig / bars / resolution)
+state = rpc({"type": "setDrumGrid", "beatsPerBar": 4, "bars": 1, "subdiv": 4}, "state")
+dm = state["drums"]
+check("drums: 5 voices, 16 steps @ 4/4 1bar 16th", len(dm["pattern"]) == 5 and dm["stepCount"] == 16,
+      f"steps={dm['stepCount']}")
+state = rpc({"type": "setDrumGrid", "beatsPerBar": 4, "bars": 4, "subdiv": 8}, "state")
+check("4 bars 4/4 32nd -> 128 steps", state["drums"]["stepCount"] == 128)
+state = rpc({"type": "setDrumGrid", "beatsPerBar": 3, "bars": 2, "subdiv": 4}, "state")
+check("3/4 2bar 16th -> 24 steps", state["drums"]["stepCount"] == 24)
 state = rpc({"type": "setDrumCell", "voice": 0, "step": 4, "on": True}, "state")
 check("drum cell set", state["drums"]["pattern"][0][4] == 1)
 state = rpc({"type": "setDrumCell", "voice": 0, "step": 4, "on": False}, "state")
 check("drum cell cleared", state["drums"]["pattern"][0][4] == 0)
 rpc({"type": "setDrumCell", "voice": 0, "step": 0, "on": True}, "state")
-rpc({"type": "setDrumCell", "voice": 3, "step": 8, "on": True}, "state")
-state = rpc({"type": "clearDrums"}, "state")
-check("clearDrums empties grid", not any(any(row) for row in state["drums"]["pattern"]))
+state = rpc({"type": "setDrumGrid", "beatsPerBar": 4, "bars": 1, "subdiv": 4}, "state")
+check("changing grid clears pattern", not any(any(row) for row in state["drums"]["pattern"]))
+state = rpc({"type": "setDrumGrid", "beatsPerBar": 4, "bars": 1, "subdiv": 5}, "state")
+check("bad subdiv clamps", state["drums"]["subdiv"] == 4)
 state = rpc({"type": "setParam", "id": "drumVol", "value": 0.9}, "state")
 check("drumVol set", abs(state["params"]["drumVol"] - 0.9) < 1e-4)
 

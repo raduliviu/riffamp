@@ -153,14 +153,18 @@
   #drumBtn.on { background: var(--bad); }
   #drumClear { background: var(--panel); color: var(--text); border: 1px solid var(--line);
                border-radius: 8px; padding: 0.5rem 0.9rem; cursor: pointer; font-size: 0.8rem; }
-  .drumGrid { display: grid; gap: 0.3rem; }
-  .drumRow { display: grid; grid-template-columns: 3.4rem 1fr; align-items: center; gap: 0.5rem; }
-  .drumRow .drumLabel { font-size: 0.62rem; letter-spacing: 0.1em; color: var(--dim); text-transform: uppercase; }
-  .drumCells { display: flex; gap: 0.2rem; }
-  .drumCell { flex: 1 1 0; min-width: 0; aspect-ratio: 1; max-height: 1.5rem; border-radius: 4px;
+  .drumOpt { font-size: 0.62rem; letter-spacing: 0.1em; color: var(--dim); display: flex; align-items: center; gap: 0.35rem; }
+  .drumOpt select { width: auto; padding: 0.35rem 0.4rem; }
+  .drumGridWrap { overflow-x: auto; padding-bottom: 0.3rem; }
+  .drumGrid { display: inline-block; }
+  .drumRow { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem; }
+  .drumRow .drumLabel { position: sticky; left: 0; z-index: 1; flex: 0 0 3.2rem; background: var(--panel2);
+                        font-size: 0.62rem; letter-spacing: 0.08em; color: var(--dim); text-transform: uppercase; }
+  .drumCells { display: flex; gap: 0.15rem; }
+  .drumCell { flex: 0 0 auto; width: 1.15rem; height: 1.45rem; border-radius: 4px;
               background: var(--track); border: 1px solid var(--line); cursor: pointer; padding: 0; }
-  .drumCell:nth-child(4n+1) { margin-left: 0.25rem; }
-  .drumCell:first-child { margin-left: 0; }
+  .drumCell.beatStart { margin-left: 0.35rem; }
+  .drumCell.barStart { margin-left: 0.7rem; border-left: 2px solid var(--dim); }
   .drumCell.on { background: var(--accent); border-color: var(--accent); }
   .drumCell.beat { box-shadow: inset 0 0 0 2px var(--amber); }        /* current step (playhead) */
   .drumCell.on.beat { background: var(--accent2); }
@@ -292,10 +296,22 @@
       <div class="drumTransport">
         <button id="drumBtn">▶ PLAY</button>
         <button id="drumClear">Clear</button>
+        <label class="drumOpt">TIME
+          <select id="drumTimeSig"><option value="4">4/4</option><option value="3">3/4</option></select>
+        </label>
+        <label class="drumOpt">BARS
+          <select id="drumBars"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+        </label>
+        <label class="drumOpt">GRID
+          <select id="drumRes">
+            <option value="1">Quarter</option><option value="2">8th</option>
+            <option value="4">16th</option><option value="8">32nd</option>
+          </select>
+        </label>
         <div id="drumVolKnob"></div>
-        <span class="subLabel" style="margin:0;">Follows the tempo above</span>
       </div>
-      <div class="drumGrid" id="drumGrid"></div>
+      <div class="drumGridWrap"><div class="drumGrid" id="drumGrid"></div></div>
+      <div class="subLabel" style="margin-top:0.5rem;">Follows the tempo above · changing time/bars/grid clears the pattern</div>
     </div>
 
     <div class="groupHead"><span>Amp</span></div>
@@ -578,6 +594,9 @@ $("modelSel").addEventListener("change", (e) =>
 $("drumBtn").addEventListener("click", () =>
   ws && ws.send(JSON.stringify({ type: "setParam", id: "drumOn", value: state.params.drumOn ? 0 : 1 })));
 $("drumClear").addEventListener("click", () => ws && ws.send(JSON.stringify({ type: "clearDrums" })));
+$("drumTimeSig").addEventListener("change", sendDrumGrid);
+$("drumBars").addEventListener("change", sendDrumGrid);
+$("drumRes").addEventListener("change", sendDrumGrid);
 $("modelPrev").addEventListener("click", () => stepSelect($("modelSel"), -1, "setModel"));
 $("modelNext").addEventListener("click", () => stepSelect($("modelSel"), 1, "setModel"));
 $("irPrev").addEventListener("click", () => stepSelect($("irSel"), -1, "setIr"));
@@ -799,13 +818,15 @@ function renderPedalboard(pedals) {
 }
 
 // ---- drum machine -------------------------------------------------------------
-let drumBuilt = false;
+let drumSig = "";
 let drumStepShown = -1;
 const DRUM_LABELS = ["KICK", "SNARE", "CRASH", "HIHAT", "RIDE"];   // indexed by engine voice
 const DRUM_ORDER = [2, 4, 3, 1, 0];                                // display top→bottom: crash, ride, hihat, snare, kick
-function buildDrumGrid(nVoices, nSteps) {
+function buildDrumGrid(nVoices, nSteps, subdiv, beatsPerBar) {
   const grid = $("drumGrid");
   grid.innerHTML = "";
+  drumStepShown = -1;
+  const cellsPerBar = beatsPerBar * subdiv;
   const order = DRUM_ORDER.filter(v => v < nVoices);
   for (const v of (order.length === nVoices ? order : [...Array(nVoices).keys()])) {
     const row = document.createElement("div");
@@ -818,9 +839,11 @@ function buildDrumGrid(nVoices, nSteps) {
     for (let s = 0; s < nSteps; s++) {
       const c = document.createElement("button");
       c.className = "drumCell";
+      if (s > 0 && s % cellsPerBar === 0) c.classList.add("barStart");
+      else if (s > 0 && s % subdiv === 0) c.classList.add("beatStart");
       c.dataset.v = v; c.dataset.s = s;
       c.onclick = () => {
-        const on = !c.classList.contains("on");   // optimistic toggle
+        const on = !c.classList.contains("on");
         c.classList.toggle("on", on);
         if (ws && ws.readyState === 1)
           ws.send(JSON.stringify({ type: "setDrumCell", voice: v, step: s, on }));
@@ -830,17 +853,19 @@ function buildDrumGrid(nVoices, nSteps) {
     row.append(label, cells);
     grid.appendChild(row);
   }
-  drumBuilt = true;
 }
 function renderDrums(d) {
   if (!d) return;
-  const nV = d.pattern.length, nS = d.pattern[0].length;
-  if (!drumBuilt) buildDrumGrid(nV, nS);
-  const cells = $("drumGrid").querySelectorAll(".drumCell");
-  for (const c of cells) {
-    const on = !!d.pattern[+c.dataset.v][+c.dataset.s];
-    c.classList.toggle("on", on);
+  const sig = `${d.beatsPerBar}-${d.bars}-${d.subdiv}-${d.stepCount}`;
+  if (sig !== drumSig) {
+    drumSig = sig;
+    buildDrumGrid(d.pattern.length, d.stepCount, d.subdiv, d.beatsPerBar);
   }
+  for (const c of $("drumGrid").querySelectorAll(".drumCell"))
+    c.classList.toggle("on", !!d.pattern[+c.dataset.v][+c.dataset.s]);
+  if (document.activeElement !== $("drumTimeSig")) $("drumTimeSig").value = String(d.beatsPerBar);
+  if (document.activeElement !== $("drumBars")) $("drumBars").value = String(d.bars);
+  if (document.activeElement !== $("drumRes")) $("drumRes").value = String(d.subdiv);
   const btn = $("drumBtn");
   btn.textContent = d.on ? "■ STOP" : "▶ PLAY";
   btn.className = d.on ? "on" : "";
@@ -849,8 +874,15 @@ function renderDrums(d) {
 function drumPlayhead(step) {
   if (step === drumStepShown) return;
   drumStepShown = step;
-  const cells = $("drumGrid").querySelectorAll(".drumCell");
-  for (const c of cells) c.classList.toggle("beat", step >= 0 && +c.dataset.s === step);
+  for (const c of $("drumGrid").querySelectorAll(".drumCell"))
+    c.classList.toggle("beat", step >= 0 && +c.dataset.s === step);
+}
+function sendDrumGrid() {
+  if (ws && ws.readyState === 1)
+    ws.send(JSON.stringify({ type: "setDrumGrid",
+      beatsPerBar: Number($("drumTimeSig").value),
+      bars: Number($("drumBars").value),
+      subdiv: Number($("drumRes").value) }));
 }
 
 // ---- presets ------------------------------------------------------------------

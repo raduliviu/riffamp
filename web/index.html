@@ -272,14 +272,14 @@
     <div class="section">
       <h2>Presets</h2>
       <div class="presetRow">
-        <select id="presetSel"><option value="">— saved rigs —</option></select>
-        <button id="presetLoad">Load</button>
+        <select id="presetSel" title="Select a rig to load it"><option value="">— select a saved rig —</option></select>
         <button id="presetDelete" class="danger">Delete</button>
       </div>
       <div class="presetRow" style="margin-top: 0.6rem;">
         <input id="presetName" type="text" maxlength="40" placeholder="Name this rig…">
         <button id="presetSave" class="primary">Save current</button>
       </div>
+      <div class="subLabel" style="margin-top: 0.5rem;">Selecting a rig loads it instantly.</div>
     </div>
 
     <div class="section">
@@ -762,9 +762,7 @@ function renderPresets(names) {
   }
   if (wantSelectPreset && names.includes(wantSelectPreset)) { sel.value = wantSelectPreset; wantSelectPreset = null; }
   else if (names.includes(prev)) sel.value = prev;
-  const none = names.length === 0;
-  $("presetLoad").disabled = none;
-  $("presetDelete").disabled = none;
+  $("presetDelete").disabled = names.length === 0;
 }
 document.addEventListener("DOMContentLoaded", () => {
   $("presetSave").addEventListener("click", () => {
@@ -776,8 +774,8 @@ document.addEventListener("DOMContentLoaded", () => {
     wantSelectPreset = name;   // and select the newly saved preset once it appears
   });
   $("presetName").addEventListener("keydown", (e) => { if (e.code === "Enter") $("presetSave").click(); });
-  $("presetLoad").addEventListener("click", () => {
-    const name = $("presetSel").value;
+  $("presetSel").addEventListener("change", (e) => {   // selecting a rig loads it
+    const name = e.target.value;
     if (name && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "loadPreset", name }));
   });
   $("presetDelete").addEventListener("click", () => {

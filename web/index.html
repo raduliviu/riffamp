@@ -312,6 +312,16 @@
       </div>
       <div class="drumGridWrap"><div class="drumGrid" id="drumGrid"></div></div>
       <div class="subLabel" style="margin-top:0.5rem;">Follows the tempo above · changing time/bars/grid clears the pattern</div>
+      <div class="presetRow" style="margin-top: 0.9rem;">
+        <select id="grooveSel" title="Select a groove to load it"><option value="">— select a saved groove —</option></select>
+        <button id="grooveUpdate">Update</button>
+        <button id="grooveDelete" class="danger">Delete</button>
+      </div>
+      <div class="presetRow" style="margin-top: 0.6rem;">
+        <input id="grooveName" type="text" maxlength="40" placeholder="Name this groove…">
+        <button id="grooveSave" class="primary">Save as new</button>
+      </div>
+      <div class="subLabel" style="margin-top: 0.5rem;">Select a groove to load it · <b>Update</b> overwrites the selected groove with the current pattern · <b>Save as new</b> keeps both.</div>
     </div>
 
     <div class="groupHead"><span>Amp</span></div>
@@ -545,6 +555,7 @@ function applyState(msg) {
   renderAudio(msg.audio);
   renderDrums(msg.drums);
   renderPresets(msg.presets);
+  renderGrooves(msg.grooves);
   for (const p of PARAMS) {
     if (dragging === p.id) continue;
     state.params[p.id] = msg.params[p.id];
@@ -929,6 +940,53 @@ document.addEventListener("DOMContentLoaded", () => {
   $("presetDelete").addEventListener("click", () => {
     const name = $("presetSel").value;
     if (name && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "deletePreset", name }));
+  });
+});
+
+// ---- groove library (named drum patterns) ------------------------------------
+let grooveSig = "";
+let wantSelectGroove = null;  // select this groove once it appears (after save)
+function renderGrooves(names) {
+  if (!names) return;
+  const sig = JSON.stringify(names);
+  if (sig === grooveSig) return;
+  grooveSig = sig;
+  const sel = $("grooveSel");
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— saved grooves —</option>';
+  for (const n of names) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  }
+  if (wantSelectGroove && names.includes(wantSelectGroove)) { sel.value = wantSelectGroove; wantSelectGroove = null; }
+  else if (names.includes(prev)) sel.value = prev;
+  $("grooveDelete").disabled = !sel.value;
+  $("grooveUpdate").disabled = !sel.value;
+}
+document.addEventListener("DOMContentLoaded", () => {
+  $("grooveSave").addEventListener("click", () => {
+    const name = $("grooveName").value.trim();
+    if (!name || !ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: "saveGroove", name }));
+    $("grooveName").value = "";
+    grooveSig = "";            // force dropdown refresh on the next state
+    wantSelectGroove = name;   // and select the newly saved groove once it appears
+  });
+  $("grooveName").addEventListener("keydown", (e) => { if (e.code === "Enter") $("grooveSave").click(); });
+  $("grooveSel").addEventListener("change", (e) => {   // selecting a groove loads it
+    const name = e.target.value;
+    $("grooveUpdate").disabled = !name;
+    $("grooveDelete").disabled = !name;
+    if (name && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "loadGroove", name }));
+  });
+  $("grooveUpdate").addEventListener("click", () => {   // overwrite selected groove with current pattern
+    const name = $("grooveSel").value;
+    if (name && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "saveGroove", name }));
+  });
+  $("grooveDelete").addEventListener("click", () => {
+    const name = $("grooveSel").value;
+    if (name && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "deleteGroove", name }));
   });
 });
 

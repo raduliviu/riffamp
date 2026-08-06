@@ -900,6 +900,39 @@ struct Control {
         } catch (...) {}
     }
 
+    // Named groove library: the working pattern is a scratch pad; grooves are
+    // named snapshots of grid + pattern the user can save and switch between
+    // (the drum analogue of presets). Stored in webamp-grooves.json.
+    fs::path groovesFile;
+    json grooves = json::array();
+
+    void loadGroovesFromDisk() {
+        try {
+            std::ifstream f(groovesFile);
+            if (!f) return;
+            json j; f >> j;
+            if (j.is_array()) grooves = j;
+        } catch (...) { grooves = json::array(); }
+    }
+    void writeGrooves() {
+        try { std::ofstream f(groovesFile); f << grooves.dump(2); } catch (...) {}
+    }
+    json captureGroove(const std::string& name) {
+        return {{"name", name},
+                {"beatsPerBar", engine.drums.beatsPerBar.load()},
+                {"bars", engine.drums.bars.load()},
+                {"subdiv", engine.drums.subdiv.load()},
+                {"pattern", drumsJson()["pattern"]}};
+    }
+    void applyGroove(const json& g) {
+        engine.drums.setGrid(g.value("beatsPerBar", 4), g.value("bars", 1), g.value("subdiv", 4));
+        const json rows = g.value("pattern", json::array());
+        for (int v = 0; v < static_cast<int>(rows.size()); ++v)
+            for (int s = 0; s < static_cast<int>(rows[v].size()); ++s)
+                if (rows[v][s].get<int>()) engine.drums.setCell(v, s, true);
+        writeDrums();  // the loaded groove becomes the working pattern
+    }
+
     json stateJson() {
         json models = json::array(), irs = json::array();
         for (const auto& p : assets.models) models.push_back(Assets::displayName(p));
@@ -909,6 +942,8 @@ struct Control {
         json drums = drumsJson();
         json presetNames = json::array();
         for (const auto& pr : presets) presetNames.push_back(pr.value("name", std::string()));
+        json grooveNames = json::array();
+        for (const auto& gr : grooves) grooveNames.push_back(gr.value("name", std::string()));
         std::lock_guard<std::mutex> lk(engine.stateMx);
         return {
             {"type", "state"},
@@ -936,6 +971,7 @@ struct Control {
             {"audio", audio},
             {"drums", drums},
             {"presets", presetNames},
+            {"grooves", grooveNames},
             {"engine",
              {{"api", engine.opt.api},
               {"sampleRate", engine.opt.sr},
@@ -1081,6 +1117,40 @@ struct Control {
             *changed = true;
             return stateJson();
         }
+        if (type == "saveGroove") {
+            std::string name = msg.value("name", std::string());
+            while (!name.empty() && name.back() == ' ') name.pop_back();
+            while (!name.empty() && name.front() == ' ') name.erase(name.begin());
+            if (name.empty()) return {{"type", "error"}, {"message", "groove name required"}};
+            const json groove = captureGroove(name);
+            bool replaced = false;
+            for (auto& gr : grooves)
+                if (gr.value("name", std::string()) == name) { gr = groove; replaced = true; break; }
+            if (!replaced) grooves.push_back(groove);
+            writeGrooves();
+            *changed = true;
+            return stateJson();
+        }
+        if (type == "loadGroove") {
+            const std::string name = msg.value("name", std::string());
+            for (const auto& gr : grooves)
+                if (gr.value("name", std::string()) == name) {
+                    applyGroove(gr);
+                    *changed = true;
+                    return stateJson();
+                }
+            return {{"type", "error"}, {"message", "unknown groove: " + name}};
+        }
+        if (type == "deleteGroove") {
+            const std::string name = msg.value("name", std::string());
+            const size_t before = grooves.size();
+            for (auto it = grooves.begin(); it != grooves.end(); ++it)
+                if (it->value("name", std::string()) == name) { grooves.erase(it); break; }
+            if (grooves.size() == before) return {{"type", "error"}, {"message", "unknown groove: " + name}};
+            writeGrooves();
+            *changed = true;
+            return stateJson();
+        }
         if (type == "setModel" || type == "setIr") {
             const std::string name = msg.value("name", "");
             const bool isModel = (type == "setModel");
@@ -1182,6 +1252,8 @@ int main(int argc, char** argv) {
     control.loadPresetsFromDisk();
     control.drumsFile = exeDir() / "webamp-drums.json";
     control.loadDrumsFromDisk();
+    control.groovesFile = exeDir() / "webamp-grooves.json";
+    control.loadGroovesFromDisk();
     control.assets.root = engine.opt.assets;
     control.assets.scan();
     if (control.assets.models.empty() || control.assets.irs.empty())

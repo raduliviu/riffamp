@@ -164,6 +164,28 @@ check("bad subdiv clamps", state["drums"]["subdiv"] == 4)
 state = rpc({"type": "setParam", "id": "drumVol", "value": 0.9}, "state")
 check("drumVol set", abs(state["params"]["drumVol"] - 0.9) < 1e-4)
 
+# 4g. groove library: save current grid+pattern, mutate, load-restores, delete
+state = rpc({"type": "setDrumGrid", "beatsPerBar": 3, "bars": 2, "subdiv": 2}, "state")  # 12 steps
+rpc({"type": "setDrumCell", "voice": 4, "step": 3, "on": True}, "state")  # ride on step 3
+state = rpc({"type": "saveGroove", "name": "  ws-test-groove  "}, "state")
+check("groove saved (name trimmed)", "ws-test-groove" in state.get("grooves", []), str(state.get("grooves")))
+# change layout + pattern, then load must restore both
+rpc({"type": "setDrumGrid", "beatsPerBar": 4, "bars": 1, "subdiv": 4}, "state")
+state = rpc({"type": "loadGroove", "name": "ws-test-groove"}, "state")
+dm = state["drums"]
+check("groove load restores grid", dm["beatsPerBar"] == 3 and dm["bars"] == 2 and dm["subdiv"] == 2,
+      f"{dm['beatsPerBar']}/{dm['bars']}/{dm['subdiv']} steps={dm['stepCount']}")
+check("groove load restores pattern", dm["pattern"][4][3] == 1)
+err = rpc({"type": "loadGroove", "name": "does-not-exist"}, "error")
+check("load unknown groove -> error", err.get("type") == "error")
+err = rpc({"type": "saveGroove", "name": "   "}, "error")
+check("save blank groove -> error", err.get("type") == "error")
+state = rpc({"type": "deleteGroove", "name": "ws-test-groove"}, "state")
+check("groove deleted", "ws-test-groove" not in state.get("grooves", []))
+err = rpc({"type": "deleteGroove", "name": "ws-test-groove"}, "error")
+check("delete unknown groove -> error", err.get("type") == "error")
+rpc({"type": "setDrumGrid", "beatsPerBar": 4, "bars": 1, "subdiv": 4}, "state")  # restore default grid
+
 # 5. meters flowing
 got_meters = 0
 ws.settimeout(2)

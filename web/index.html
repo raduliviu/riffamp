@@ -273,13 +273,14 @@
       <h2>Presets</h2>
       <div class="presetRow">
         <select id="presetSel" title="Select a rig to load it"><option value="">— select a saved rig —</option></select>
+        <button id="presetUpdate">Update</button>
         <button id="presetDelete" class="danger">Delete</button>
       </div>
       <div class="presetRow" style="margin-top: 0.6rem;">
-        <input id="presetName" type="text" maxlength="40" placeholder="Name this rig…">
-        <button id="presetSave" class="primary">Save current</button>
+        <input id="presetName" type="text" maxlength="40" placeholder="Name a new rig…">
+        <button id="presetSave" class="primary">Save as new</button>
       </div>
-      <div class="subLabel" style="margin-top: 0.5rem;">Selecting a rig loads it instantly.</div>
+      <div class="subLabel" style="margin-top: 0.5rem;">Select a rig to load it · <b>Update</b> overwrites the selected rig with your current settings · <b>Save as new</b> keeps both.</div>
     </div>
 
     <div class="section">
@@ -762,7 +763,8 @@ function renderPresets(names) {
   }
   if (wantSelectPreset && names.includes(wantSelectPreset)) { sel.value = wantSelectPreset; wantSelectPreset = null; }
   else if (names.includes(prev)) sel.value = prev;
-  $("presetDelete").disabled = names.length === 0;
+  $("presetDelete").disabled = !sel.value;
+  $("presetUpdate").disabled = !sel.value;
 }
 document.addEventListener("DOMContentLoaded", () => {
   $("presetSave").addEventListener("click", () => {
@@ -776,7 +778,13 @@ document.addEventListener("DOMContentLoaded", () => {
   $("presetName").addEventListener("keydown", (e) => { if (e.code === "Enter") $("presetSave").click(); });
   $("presetSel").addEventListener("change", (e) => {   // selecting a rig loads it
     const name = e.target.value;
+    $("presetUpdate").disabled = !name;
+    $("presetDelete").disabled = !name;
     if (name && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "loadPreset", name }));
+  });
+  $("presetUpdate").addEventListener("click", () => {   // overwrite selected rig with current settings
+    const name = $("presetSel").value;
+    if (name && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "savePreset", name }));
   });
   $("presetDelete").addEventListener("click", () => {
     const name = $("presetSel").value;

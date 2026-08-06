@@ -55,12 +55,13 @@
   .section.collapsed > h2::before { transform: rotate(-90deg); }
   /* !important overrides the inline display:flex on some section bodies */
   .section.collapsed > *:not(h2) { display: none !important; }
-  /* channel buttons */
-  .channels { display: flex; gap: 0.6rem; flex-wrap: wrap; }
-  .channels button { background: var(--panel); color: var(--text); border: 1px solid var(--line);
-                     border-radius: 8px; padding: 0.55rem 1rem; cursor: pointer; font-size: 0.85rem; }
-  .channels button.active { border-color: var(--accent); color: var(--accent2); box-shadow: 0 0 10px rgba(59,130,246,0.25); }
-  .channels button:hover { background: var(--panel2); }
+  /* model / cabinet stepper: ◀ [ dropdown ] ▶ */
+  .stepper { display: flex; gap: 0.5rem; align-items: stretch; }
+  .stepper select { flex: 1; min-width: 0; }
+  .stepBtn { flex: 0 0 auto; background: var(--panel); color: var(--text); border: 1px solid var(--line);
+             border-radius: 8px; padding: 0 0.85rem; cursor: pointer; font-size: 0.85rem; }
+  .stepBtn:hover { background: var(--panel2); border-color: var(--accent); color: var(--accent2); }
+  .stepBtn:active { transform: scale(0.94); }
   /* knobs */
   .knobs { display: flex; gap: 1.6rem; flex-wrap: wrap; justify-content: space-around; }
   .knob { display: grid; justify-items: center; gap: 0.3rem; user-select: none; touch-action: none; }
@@ -285,13 +286,20 @@
 
     <div class="section">
       <h2>Amp model</h2>
-      <div class="channels" id="channels"></div>
+      <div class="stepper">
+        <button class="stepBtn" id="modelPrev" title="Previous model" aria-label="Previous model">◀</button>
+        <select id="modelSel"></select>
+        <button class="stepBtn" id="modelNext" title="Next model" aria-label="Next model">▶</button>
+      </div>
     </div>
 
     <div class="section">
       <h2>Cabinet</h2>
-      <div class="subLabel">Cabinet IR</div>
-      <select id="irSel"></select>
+      <div class="stepper">
+        <button class="stepBtn" id="irPrev" title="Previous cabinet" aria-label="Previous cabinet">◀</button>
+        <select id="irSel"></select>
+        <button class="stepBtn" id="irNext" title="Next cabinet" aria-label="Next cabinet">▶</button>
+      </div>
     </div>
 
     <div class="section">
@@ -460,6 +468,29 @@ function queueParam(id, value) {
 }
 
 // ---- state application -------------------------------------------------------
+// Populate a <select> from a list, rebuilding options only when the list
+// changes; the value is synced unless the user is actively in the dropdown.
+function fillSelect(sel, items, value) {
+  if (sel.dataset.count !== String(items.length)) {
+    sel.innerHTML = "";
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = o.textContent = it;
+      sel.appendChild(o);
+    }
+    sel.dataset.count = String(items.length);
+  }
+  if (document.activeElement !== sel) sel.value = value;
+}
+// Step a dropdown by ±1 (wrapping) and send the resulting selection.
+function stepSelect(sel, dir, type) {
+  const n = sel.options.length;
+  if (!n || !ws || ws.readyState !== 1) return;
+  const i = ((sel.selectedIndex < 0 ? 0 : sel.selectedIndex) + dir + n) % n;
+  sel.selectedIndex = i;
+  ws.send(JSON.stringify({ type, name: sel.value }));
+}
+
 function applyState(msg) {
   state.models = msg.models; state.irs = msg.irs;
   state.model = msg.model; state.ir = msg.ir;
@@ -471,28 +502,9 @@ function applyState(msg) {
     state.params[p.id] = msg.params[p.id];
     knobEls[p.id](msg.params[p.id]);
   }
-  // channels
-  const ch = $("channels");
-  ch.innerHTML = "";
-  for (const m of state.models) {
-    const b = document.createElement("button");
-    b.textContent = m.replace(/^MARSHALL JCM800 2210 100W CH\s*/i, "") || m;
-    b.title = m;
-    b.className = m === state.model ? "active" : "";
-    b.onclick = () => ws && ws.send(JSON.stringify({ type: "setModel", name: m }));
-    ch.appendChild(b);
-  }
-  // irs
-  const sel = $("irSel");
-  if (sel.options.length !== state.irs.length) {
-    sel.innerHTML = "";
-    for (const ir of state.irs) {
-      const o = document.createElement("option");
-      o.value = o.textContent = ir;
-      sel.appendChild(o);
-    }
-  }
-  sel.value = state.ir;
+  // amp model + cabinet — dropdowns (options rebuilt only when the list changes)
+  fillSelect($("modelSel"), state.models, state.model);
+  fillSelect($("irSel"), state.irs, state.ir);
   // tuner
   state.params.tunerOn = msg.params.tunerOn;
   const tb = $("tunerBtn");
@@ -529,6 +541,12 @@ function applyState(msg) {
 
 $("irSel").addEventListener("change", (e) =>
   ws && ws.send(JSON.stringify({ type: "setIr", name: e.target.value })));
+$("modelSel").addEventListener("change", (e) =>
+  ws && ws.send(JSON.stringify({ type: "setModel", name: e.target.value })));
+$("modelPrev").addEventListener("click", () => stepSelect($("modelSel"), -1, "setModel"));
+$("modelNext").addEventListener("click", () => stepSelect($("modelSel"), 1, "setModel"));
+$("irPrev").addEventListener("click", () => stepSelect($("irSel"), -1, "setIr"));
+$("irNext").addEventListener("click", () => stepSelect($("irSel"), 1, "setIr"));
 // ---- metronome (UX ported from F:\codework\metronome, engine-clocked) --------
 const MIN_BPM = 20, MAX_BPM = 360;
 let metroStep = Number(localStorage.getItem("webamp:metroStep")) || 5;

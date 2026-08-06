@@ -42,6 +42,7 @@
 #include "dsp_extra.h"
 #include "tuner.h"
 #include "pedals.h"
+#include "drums.h"
 
 #include <ixwebsocket/IXHttpServer.h>
 #include <ixwebsocket/IXWebSocketServer.h>
@@ -248,6 +249,11 @@ struct Engine {
     std::atomic<long long> beatCount{0};  // clicks fired; UI flashes on change
     std::atomic<int> beatInBar{0};
 
+    // Drum machine (groove box) — shares the metronome tempo.
+    webamp::DrumMachine drums;
+    std::atomic<bool> drumOn{false};
+    std::atomic<float> drumVol{0.6f};
+
     // Tuner: audio thread writes pre-gate input into a ring; control thread
     // snapshots the last window and runs YIN on it.
     std::atomic<bool> tunerOn{false};
@@ -318,6 +324,7 @@ struct Engine {
         const float sr = static_cast<float>(opt.sr);
         gate.configure(sr);
         metro.configure(sr);
+        drums.configure(sr);
         inCh.store(opt.inCh);
         for (auto* p : pedals) p->configure(sr);
         // Default placement/order (all disabled until the user switches one on).
@@ -390,12 +397,16 @@ struct Engine {
         const float mVol = metroVol.load(std::memory_order_relaxed);
         const int mBeats = metroBeats.load(std::memory_order_relaxed);
         const bool mAccent = metroAccent.load(std::memory_order_relaxed);
+        const bool dOn = drumOn.load(std::memory_order_relaxed);
+        const float dVol = drumVol.load(std::memory_order_relaxed);
         metro.blockStart(mOn);
+        drums.blockStart(dOn);
 
         float pOut = 0.0f;
         for (unsigned long f = 0; f < frames; ++f) {
             const float click = metro.process(mOn, mBpm, mBeats, mAccent) * mVol;
-            const float v = std::clamp(bufA[f] * gOut + click, -1.0f, 1.0f);
+            const float drum = drums.process(dOn, mBpm) * dVol;
+            const float v = std::clamp(bufA[f] * gOut + click + drum, -1.0f, 1.0f);
             pOut = std::max(pOut, std::fabs(v));
             for (int c = 0; c < chOut_; ++c) out[f * chOut_ + c] = v;
         }
@@ -844,12 +855,28 @@ struct Control {
         return j;
     }
 
+    json drumsJson() {
+        json rows = json::array();
+        for (int v = 0; v < webamp::DrumMachine::kVoices; ++v) {
+            const uint16_t mask = engine.drums.pattern[v].load();
+            json steps = json::array();
+            for (int s = 0; s < webamp::DrumMachine::kSteps; ++s) steps.push_back((mask >> s) & 1);
+            rows.push_back(steps);
+        }
+        return {{"on", engine.drumOn.load()},
+                {"vol", engine.drumVol.load()},
+                {"step", engine.drums.curStep.load()},
+                {"voices", {"kick", "snare", "crash", "hihat", "ride"}},
+                {"pattern", rows}};
+    }
+
     json stateJson() {
         json models = json::array(), irs = json::array();
         for (const auto& p : assets.models) models.push_back(Assets::displayName(p));
         for (const auto& p : assets.irs) irs.push_back(Assets::displayName(p));
         json pedals = pedalsJson();
         json audio = audioJson();
+        json drums = drumsJson();
         json presetNames = json::array();
         for (const auto& pr : presets) presetNames.push_back(pr.value("name", std::string()));
         std::lock_guard<std::mutex> lk(engine.stateMx);
@@ -869,6 +896,7 @@ struct Control {
               {"metroBpm", engine.metroBpm.load()},
               {"metroBeats", engine.metroBeats.load()},
               {"metroVol", engine.metroVol.load()},
+              {"drumVol", engine.drumVol.load()},
               {"tunerOn", engine.tunerOn.load()}}},
             {"model", engine.modelName},
             {"ir", engine.irName},
@@ -876,6 +904,7 @@ struct Control {
             {"irs", irs},
             {"pedals", pedals},
             {"audio", audio},
+            {"drums", drums},
             {"presets", presetNames},
             {"engine",
              {{"api", engine.opt.api},
@@ -918,6 +947,8 @@ struct Control {
                 engine.inCh.store(std::clamp(static_cast<int>(v), 1, 8));
                 if (audio) audio->persist();
             }
+            else if (id == "drumOn") engine.drumOn.store(v != 0.0f);
+            else if (id == "drumVol") engine.drumVol.store(std::clamp(v, 0.0f, 2.0f));
             else return {{"type", "error"}, {"message", "unknown param: " + id}};
             if (id == "gainIn" || id == "gainOut" || id == "gate" || id == "bass" ||
                 id == "mid" || id == "treble" || id == "metroAccent" || id == "metroBpm" ||
@@ -963,6 +994,16 @@ struct Control {
             // Buffer resize needs the DSP buffers reallocated → apply at startup.
             audio->pendingBuffer.store(b == engine.opt.buffer ? 0 : b);
             audio->persist();
+            *changed = true;
+            return stateJson();
+        }
+        if (type == "setDrumCell") {
+            engine.drums.setCell(msg.value("voice", -1), msg.value("step", -1), msg.value("on", false));
+            *changed = true;
+            return stateJson();
+        }
+        if (type == "clearDrums") {
+            engine.drums.clear();
             *changed = true;
             return stateJson();
         }
@@ -1254,7 +1295,9 @@ int main(int argc, char** argv) {
                         {"in", engine.peakIn.exchange(0.0f)},
                         {"out", engine.peakOut.exchange(0.0f)},
                         {"beatCount", engine.beatCount.load(std::memory_order_relaxed)},
-                        {"beatInBar", engine.beatInBar.load(std::memory_order_relaxed)}};
+                        {"beatInBar", engine.beatInBar.load(std::memory_order_relaxed)},
+                        {"drumStep", engine.drumOn.load(std::memory_order_relaxed)
+                                         ? engine.drums.curStep.load(std::memory_order_relaxed) : -1}};
         const std::string s = m.dump();
         for (auto&& client : clients) client->send(s);
     }

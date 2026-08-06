@@ -145,6 +145,25 @@
   .kbd { font-size: 0.68rem; color: var(--dim); }
   .kbd kbd { background: var(--panel); border: 1px solid var(--line); border-bottom-width: 2px;
              border-radius: 5px; padding: 0.1rem 0.35rem; color: var(--text); }
+  /* drum machine */
+  .drumTransport { display: flex; gap: 0.9rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.9rem; }
+  #drumBtn { background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+             padding: 0.55rem 1.3rem; font-weight: 600; cursor: pointer; }
+  #drumBtn:hover { background: #2563eb; }
+  #drumBtn.on { background: var(--bad); }
+  #drumClear { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+               border-radius: 8px; padding: 0.5rem 0.9rem; cursor: pointer; font-size: 0.8rem; }
+  .drumGrid { display: grid; gap: 0.3rem; }
+  .drumRow { display: grid; grid-template-columns: 3.4rem 1fr; align-items: center; gap: 0.5rem; }
+  .drumRow .drumLabel { font-size: 0.62rem; letter-spacing: 0.1em; color: var(--dim); text-transform: uppercase; }
+  .drumCells { display: flex; gap: 0.2rem; }
+  .drumCell { flex: 1 1 0; min-width: 0; aspect-ratio: 1; max-height: 1.5rem; border-radius: 4px;
+              background: var(--track); border: 1px solid var(--line); cursor: pointer; padding: 0; }
+  .drumCell:nth-child(4n+1) { margin-left: 0.25rem; }
+  .drumCell:first-child { margin-left: 0; }
+  .drumCell.on { background: var(--accent); border-color: var(--accent); }
+  .drumCell.beat { box-shadow: inset 0 0 0 2px var(--amber); }        /* current step (playhead) */
+  .drumCell.on.beat { background: var(--accent2); }
   /* pedalboard */
   .pbZone { margin: 0.3rem 0; }
   .pbLabel { font-size: 0.65rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); margin-bottom: 0.4rem; }
@@ -268,6 +287,17 @@
       </div>
     </div>
 
+    <div class="section">
+      <h2>Drum machine</h2>
+      <div class="drumTransport">
+        <button id="drumBtn">▶ PLAY</button>
+        <button id="drumClear">Clear</button>
+        <div id="drumVolKnob"></div>
+        <span class="subLabel" style="margin:0;">Follows the tempo above</span>
+      </div>
+      <div class="drumGrid" id="drumGrid"></div>
+    </div>
+
     <div class="groupHead"><span>Amp</span></div>
 
     <div class="section">
@@ -383,6 +413,7 @@ const PARAMS = [
   { id: "treble",  label: "TREBLE", min: -12,  max: 12, def: 0, fmt: v => (v > 0 ? "+" : "") + v.toFixed(1) },
   { id: "gainOut", label: "VOLUME", min: 0,    max: 4,  def: 1, fmt: v => v.toFixed(2) },
   { id: "metroVol", label: "CLICK", min: 0,    max: 2,  def: 0.5, fmt: v => v.toFixed(2), mount: "metroKnob" },
+  { id: "drumVol",  label: "DRUMS", min: 0,    max: 2,  def: 0.6, fmt: v => v.toFixed(2), mount: "drumVolKnob" },
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -496,6 +527,7 @@ function applyState(msg) {
   state.model = msg.model; state.ir = msg.ir;
   renderPedalboard(msg.pedals);
   renderAudio(msg.audio);
+  renderDrums(msg.drums);
   renderPresets(msg.presets);
   for (const p of PARAMS) {
     if (dragging === p.id) continue;
@@ -543,6 +575,9 @@ $("irSel").addEventListener("change", (e) =>
   ws && ws.send(JSON.stringify({ type: "setIr", name: e.target.value })));
 $("modelSel").addEventListener("change", (e) =>
   ws && ws.send(JSON.stringify({ type: "setModel", name: e.target.value })));
+$("drumBtn").addEventListener("click", () =>
+  ws && ws.send(JSON.stringify({ type: "setParam", id: "drumOn", value: state.params.drumOn ? 0 : 1 })));
+$("drumClear").addEventListener("click", () => ws && ws.send(JSON.stringify({ type: "clearDrums" })));
 $("modelPrev").addEventListener("click", () => stepSelect($("modelSel"), -1, "setModel"));
 $("modelNext").addEventListener("click", () => stepSelect($("modelSel"), 1, "setModel"));
 $("irPrev").addEventListener("click", () => stepSelect($("irSel"), -1, "setIr"));
@@ -761,6 +796,59 @@ function renderPedalboard(pedals) {
   };
   fill($("preZone"), pre);
   fill($("postZone"), post);
+}
+
+// ---- drum machine -------------------------------------------------------------
+let drumBuilt = false;
+let drumStepShown = -1;
+const DRUM_LABELS = ["KICK", "SNARE", "CRASH", "HIHAT", "RIDE"];
+function buildDrumGrid(nVoices, nSteps) {
+  const grid = $("drumGrid");
+  grid.innerHTML = "";
+  for (let v = 0; v < nVoices; v++) {
+    const row = document.createElement("div");
+    row.className = "drumRow";
+    const label = document.createElement("div");
+    label.className = "drumLabel";
+    label.textContent = DRUM_LABELS[v] || ("V" + v);
+    const cells = document.createElement("div");
+    cells.className = "drumCells";
+    for (let s = 0; s < nSteps; s++) {
+      const c = document.createElement("button");
+      c.className = "drumCell";
+      c.dataset.v = v; c.dataset.s = s;
+      c.onclick = () => {
+        const on = !c.classList.contains("on");   // optimistic toggle
+        c.classList.toggle("on", on);
+        if (ws && ws.readyState === 1)
+          ws.send(JSON.stringify({ type: "setDrumCell", voice: v, step: s, on }));
+      };
+      cells.appendChild(c);
+    }
+    row.append(label, cells);
+    grid.appendChild(row);
+  }
+  drumBuilt = true;
+}
+function renderDrums(d) {
+  if (!d) return;
+  const nV = d.pattern.length, nS = d.pattern[0].length;
+  if (!drumBuilt) buildDrumGrid(nV, nS);
+  const cells = $("drumGrid").querySelectorAll(".drumCell");
+  for (const c of cells) {
+    const on = !!d.pattern[+c.dataset.v][+c.dataset.s];
+    c.classList.toggle("on", on);
+  }
+  const btn = $("drumBtn");
+  btn.textContent = d.on ? "■ STOP" : "▶ PLAY";
+  btn.className = d.on ? "on" : "";
+  state.params.drumOn = d.on;
+}
+function drumPlayhead(step) {
+  if (step === drumStepShown) return;
+  drumStepShown = step;
+  const cells = $("drumGrid").querySelectorAll(".drumCell");
+  for (const c of cells) c.classList.toggle("beat", step >= 0 && +c.dataset.s === step);
 }
 
 // ---- presets ------------------------------------------------------------------
@@ -989,6 +1077,7 @@ function connect() {
         if (lastBeatCount >= 0 && state.params.metroOn) flashBeat(msg.beatInBar);
         lastBeatCount = msg.beatCount;
       }
+      if (msg.drumStep !== undefined) drumPlayhead(msg.drumStep);
     }
   };
   ws.onclose = () => { setConn(false, "engine offline"); setTimeout(connect, 2000); };

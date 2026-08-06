@@ -78,9 +78,12 @@ check("tunerOn cleared", state["params"]["tunerOn"] is False)
 state = rpc({"type": "hello"}, "state")
 peds = {p["type"]: p for p in state.get("pedals", [])}
 check("5 pedals in state", set(peds) == {"comp", "drive", "chorus", "delay", "reverb"}, str(list(peds)))
-check("pedals default off", all(not p["enabled"] for p in peds.values()))
 check("drive defaults pre-amp", peds.get("drive", {}).get("placement") == "pre")
 check("reverb defaults post-amp", peds.get("reverb", {}).get("placement") == "post")
+# All can be disabled (order-independent — the shared dev engine may carry state)
+for _pt in ("comp", "drive", "chorus", "delay", "reverb"):
+    state = rpc({"type": "setPedal", "pedal": _pt, "field": "enabled", "value": 0}, "state")
+check("all pedals disable", all(not p["enabled"] for p in state["pedals"]))
 
 state = rpc({"type": "setPedal", "pedal": "drive", "field": "enabled", "value": 1}, "state")
 dr = next(p for p in state["pedals"] if p["type"] == "drive")
@@ -124,6 +127,21 @@ state = rpc({"type": "setBuffer", "value": cur_buf}, "state")  # back to current
 check("setBuffer to current clears pending", "buffer" not in state["audio"].get("pending", {}))
 err = rpc({"type": "setBuffer", "value": 100}, "error")
 check("invalid buffer -> error", err.get("type") == "error")
+
+# 4e. presets: save current, mutate, load-restores, delete
+state = rpc({"type": "setParam", "id": "treble", "value": 5.5}, "state")
+state = rpc({"type": "savePreset", "name": "  ws-test-rig  "}, "state")
+check("preset saved (name trimmed)", "ws-test-rig" in state.get("presets", []), str(state.get("presets")))
+rpc({"type": "setParam", "id": "treble", "value": -5.0}, "state")  # change it
+state = rpc({"type": "loadPreset", "name": "ws-test-rig"}, "state")
+check("preset load restores param", abs(state["params"]["treble"] - 5.5) < 1e-4, str(state["params"]["treble"]))
+err = rpc({"type": "loadPreset", "name": "does-not-exist"}, "error")
+check("load unknown preset -> error", err.get("type") == "error")
+err = rpc({"type": "savePreset", "name": "   "}, "error")
+check("save blank name -> error", err.get("type") == "error")
+state = rpc({"type": "deletePreset", "name": "ws-test-rig"}, "state")
+check("preset deleted", "ws-test-rig" not in state.get("presets", []))
+rpc({"type": "setParam", "id": "treble", "value": 0.0}, "state")  # restore neutral
 
 # 5. meters flowing
 got_meters = 0

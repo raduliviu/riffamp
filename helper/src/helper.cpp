@@ -652,6 +652,70 @@ struct Control {
     Engine& engine;
     Assets assets;
     AudioIO* audio = nullptr;
+    fs::path presetsFile;
+    json presets = json::array();  // list of preset objects, loaded at startup
+
+    void loadPresetsFromDisk() {
+        try {
+            std::ifstream f(presetsFile);
+            if (!f) return;
+            json j; f >> j;
+            if (j.is_array()) presets = j;
+        } catch (...) { presets = json::array(); }
+    }
+    void writePresets() {
+        try { std::ofstream f(presetsFile); f << presets.dump(2); } catch (...) {}
+    }
+
+    // Capture the current tone (amp + cab + knobs + pedals) as a named preset.
+    json capturePreset(const std::string& name) {
+        json params = {{"gainIn", engine.gainIn.load()}, {"gainOut", engine.gainOut.load()},
+                       {"gate", engine.gateDb.load()},   {"bass", engine.bassDb.load()},
+                       {"mid", engine.midDb.load()},      {"treble", engine.trebleDb.load()}};
+        json peds = json::array();
+        for (auto* p : engine.pedals) {
+            json pp = json::object();
+            for (const auto& kv : p->paramList()) pp[kv.first] = kv.second;
+            peds.push_back({{"type", p->type()}, {"enabled", p->enabled.load()},
+                            {"placement", p->placement.load() == 0 ? "pre" : "post"},
+                            {"order", p->order.load()}, {"params", pp}});
+        }
+        std::lock_guard<std::mutex> lk(engine.stateMx);
+        return {{"name", name}, {"model", engine.modelName}, {"ir", engine.irName},
+                {"params", params}, {"pedals", peds}};
+    }
+
+    // Apply a preset. Missing model/IR assets are skipped (tone applies partially).
+    void applyPreset(const json& p) {
+        std::string e;
+        if (const fs::path* mp = assets.find(assets.models, p.value("model", std::string())))
+            loadModel(*mp, &e);
+        if (const fs::path* ip = assets.find(assets.irs, p.value("ir", std::string())))
+            loadIr(*ip, &e);
+        const json pr = p.value("params", json::object());
+        auto num = [&](const char* k, float def) { return pr.contains(k) ? pr[k].get<float>() : def; };
+        engine.gainIn.store(std::clamp(num("gainIn", 1.0f), 0.0f, 8.0f));
+        engine.gainOut.store(std::clamp(num("gainOut", 1.0f), 0.0f, 4.0f));
+        engine.gateDb.store(std::clamp(num("gate", -100.0f), -100.0f, 0.0f));
+        engine.bassDb.store(std::clamp(num("bass", 0.0f), -12.0f, 12.0f));
+        engine.midDb.store(std::clamp(num("mid", 0.0f), -12.0f, 12.0f));
+        engine.trebleDb.store(std::clamp(num("treble", 0.0f), -12.0f, 12.0f));
+        engine.toneDirty.store(true);
+        for (const auto& pd : p.value("pedals", json::array())) {
+            webamp::Pedal* ped = engine.findPedal(pd.value("type", std::string()));
+            if (!ped) continue;
+            const bool en = pd.value("enabled", false);
+            if (en) ped->needReset.store(true);
+            ped->enabled.store(en);
+            ped->placement.store(pd.value("placement", std::string("pre")) == "post" ? 1 : 0);
+            ped->order.store(pd.value("order", 0));
+            // Bind to a named object: calling .items() on the temporary from
+            // pd.value(...) would dangle (range-for won't extend its lifetime).
+            const json pparams = pd.value("params", json::object());
+            for (const auto& item : pparams.items())
+                if (item.value().is_number()) ped->setParam(item.key(), item.value().get<float>());
+        }
+    }
 
     // Debounced rig persistence: handlers mark the config dirty; the meter loop
     // flushes ~400 ms after the last change so knob drags don't thrash the disk.
@@ -786,6 +850,8 @@ struct Control {
         for (const auto& p : assets.irs) irs.push_back(Assets::displayName(p));
         json pedals = pedalsJson();
         json audio = audioJson();
+        json presetNames = json::array();
+        for (const auto& pr : presets) presetNames.push_back(pr.value("name", std::string()));
         std::lock_guard<std::mutex> lk(engine.stateMx);
         return {
             {"type", "state"},
@@ -810,6 +876,7 @@ struct Control {
             {"irs", irs},
             {"pedals", pedals},
             {"audio", audio},
+            {"presets", presetNames},
             {"engine",
              {{"api", engine.opt.api},
               {"sampleRate", engine.opt.sr},
@@ -896,6 +963,41 @@ struct Control {
             // Buffer resize needs the DSP buffers reallocated → apply at startup.
             audio->pendingBuffer.store(b == engine.opt.buffer ? 0 : b);
             audio->persist();
+            *changed = true;
+            return stateJson();
+        }
+        if (type == "savePreset") {
+            std::string name = msg.value("name", std::string());
+            // trim
+            while (!name.empty() && name.back() == ' ') name.pop_back();
+            while (!name.empty() && name.front() == ' ') name.erase(name.begin());
+            if (name.empty()) return {{"type", "error"}, {"message", "preset name required"}};
+            const json preset = capturePreset(name);
+            bool replaced = false;
+            for (auto& pr : presets)
+                if (pr.value("name", std::string()) == name) { pr = preset; replaced = true; break; }
+            if (!replaced) presets.push_back(preset);
+            writePresets();
+            *changed = true;
+            return stateJson();
+        }
+        if (type == "loadPreset") {
+            const std::string name = msg.value("name", std::string());
+            for (const auto& pr : presets)
+                if (pr.value("name", std::string()) == name) {
+                    applyPreset(pr);
+                    *changed = true;
+                    return stateJson();
+                }
+            return {{"type", "error"}, {"message", "unknown preset: " + name}};
+        }
+        if (type == "deletePreset") {
+            const std::string name = msg.value("name", std::string());
+            const size_t before = presets.size();
+            for (auto it = presets.begin(); it != presets.end(); ++it)
+                if (it->value("name", std::string()) == name) { presets.erase(it); break; }
+            if (presets.size() == before) return {{"type", "error"}, {"message", "unknown preset: " + name}};
+            writePresets();
             *changed = true;
             return stateJson();
         }
@@ -996,6 +1098,8 @@ int main(int argc, char** argv) {
     engine.initBuffers();
 
     Control control{engine};
+    control.presetsFile = exeDir() / "webamp-presets.json";
+    control.loadPresetsFromDisk();
     control.assets.root = engine.opt.assets;
     control.assets.scan();
     if (control.assets.models.empty() || control.assets.irs.empty())

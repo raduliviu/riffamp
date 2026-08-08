@@ -1,24 +1,31 @@
-﻿cmake_minimum_required(VERSION 3.21)
-project(webamp-helper CXX RC)
+cmake_minimum_required(VERSION 3.21)
+if(WIN32)
+  project(webamp-helper CXX RC)
+else()
+  project(webamp-helper CXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 
-# ASIO SDK (Steinberg, GPLv3/proprietary dual-licensed since late 2025).
-# PortAudio's CMake picks it up via ASIOSDK_ROOT_DIR / find module.
-FetchContent_Declare(
-  asiosdk
-  URL https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip
-)
-FetchContent_MakeAvailable(asiosdk)
-set(ASIOSDK_ROOT_DIR "${asiosdk_SOURCE_DIR}" CACHE PATH "" FORCE)
-set(ASIO_SDK_DIR "${asiosdk_SOURCE_DIR}" CACHE PATH "" FORCE)
+if(WIN32)
+  # ASIO SDK (Steinberg, GPLv3/proprietary dual-licensed since late 2025).
+  # PortAudio's CMake picks it up via ASIOSDK_ROOT_DIR / find module.
+  FetchContent_Declare(
+    asiosdk
+    URL https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip
+  )
+  FetchContent_MakeAvailable(asiosdk)
+  set(ASIOSDK_ROOT_DIR "${asiosdk_SOURCE_DIR}" CACHE PATH "" FORCE)
+  set(ASIO_SDK_DIR "${asiosdk_SOURCE_DIR}" CACHE PATH "" FORCE)
 
-set(PA_USE_ASIO ON CACHE BOOL "" FORCE)
-set(PA_USE_WASAPI ON CACHE BOOL "" FORCE)
-set(PA_USE_WDMKS ON CACHE BOOL "" FORCE)
+  set(PA_USE_ASIO ON CACHE BOOL "" FORCE)
+  set(PA_USE_WASAPI ON CACHE BOOL "" FORCE)
+  set(PA_USE_WDMKS ON CACHE BOOL "" FORCE)
+endif()
+# macOS: PortAudio enables CoreAudio by default — nothing to fetch or force.
 set(PA_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
@@ -50,8 +57,10 @@ target_include_directories(namcore PUBLIC
   "${namcore_SOURCE_DIR}/Dependencies/nlohmann"
 )
 target_compile_features(namcore PUBLIC cxx_std_20)
-target_compile_definitions(namcore PUBLIC
-  NAM_SAMPLE_FLOAT NAM_ENABLE_A2_FAST NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_definitions(namcore PUBLIC NAM_SAMPLE_FLOAT NAM_ENABLE_A2_FAST)
+if(WIN32)
+  target_compile_definitions(namcore PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 
 # FFTConvolver (MIT) — partitioned convolution for cabinet IRs.
 FetchContent_Declare(
@@ -82,14 +91,19 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(ixwebsocket)
 
-add_executable(p1a src/main.cpp)
-target_link_libraries(p1a PRIVATE portaudio)
+set(WEBAMP_DSP_DIR   "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp")
 
-add_executable(p1b src/amp.cpp)
-target_include_directories(p1b PRIVATE "${drlibs_SOURCE_DIR}")
-# WHOLE_ARCHIVE: NAM's config parsers self-register via static initializers,
-# which the linker would otherwise drop from a static lib.
-target_link_libraries(p1b PRIVATE portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver)
+if(WIN32)
+  # P1 latency experiments (WASAPI-exclusive probing) — Windows-only by nature.
+  add_executable(p1a src/main.cpp)
+  target_link_libraries(p1a PRIVATE portaudio)
+
+  add_executable(p1b src/amp.cpp)
+  target_include_directories(p1b PRIVATE "${drlibs_SOURCE_DIR}")
+  # WHOLE_ARCHIVE: NAM's config parsers self-register via static initializers,
+  # which the linker would otherwise drop from a static lib.
+  target_link_libraries(p1b PRIVATE portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver)
+endif()
 
 # Embed the web UI into the helper so it serves its own page.
 set(WEB_UI_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/web_ui.h")
@@ -103,19 +117,32 @@ add_custom_command(
           "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake"
 )
 
+# Offline DSP tests — portable; the shared-code canary on both platforms.
 add_executable(tuner_test src/tuner_test.cpp)
+target_include_directories(tuner_test PRIVATE "${WEBAMP_DSP_DIR}")
 target_compile_features(tuner_test PRIVATE cxx_std_17)
 
 add_executable(pedals_test src/pedals_test.cpp)
+target_include_directories(pedals_test PRIVATE "${WEBAMP_DSP_DIR}")
 target_compile_features(pedals_test PRIVATE cxx_std_17)
 
-add_executable(webamp-helper src/helper.cpp resources/webamp.rc "${WEB_UI_HEADER}")
+# The helper: portable core + one platform shell file.
+if(WIN32)
+  set(WEBAMP_PLATFORM_SOURCES src/platform/platform_win.cpp resources/webamp.rc)
+elseif(APPLE)
+  set(WEBAMP_PLATFORM_SOURCES src/platform/platform_mac.cpp)
+else()
+  message(FATAL_ERROR "webamp-helper supports Windows and macOS (Linux shell not written yet)")
+endif()
+
+add_executable(webamp-helper src/helper.cpp ${WEBAMP_PLATFORM_SOURCES} "${WEB_UI_HEADER}")
 target_include_directories(webamp-helper PRIVATE
-  "${drlibs_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  "${drlibs_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated"
+  "${WEBAMP_DSP_DIR}" src/engine src/platform)
 target_link_libraries(webamp-helper PRIVATE
-  portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver ixwebsocket
-  user32 shell32 gdi32)
-# Tray app: windows subsystem (no console) but keep main() as the entry point.
-target_link_options(webamp-helper PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:mainCRTStartup")
-
-
+  portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver ixwebsocket)
+if(WIN32)
+  target_link_libraries(webamp-helper PRIVATE user32 shell32 gdi32)
+  # Tray app: windows subsystem (no console) but keep main() as the entry point.
+  target_link_options(webamp-helper PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:mainCRTStartup")
+endif()

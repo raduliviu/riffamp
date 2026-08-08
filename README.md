@@ -12,19 +12,22 @@ low-latency-input tracking issue was closed Won't-Fix). So webamp is a
 **hybrid**: the browser is only the UI, and a tiny native helper does all the
 real-time audio.
 
-- **`helper/`** — a native Windows tray app that owns the audio path:
-  ASIO capture → noise gate → pedals → NAM amp model → tone stack → cabinet IR →
-  pedals → output, plus a metronome, tuner, and drum machine mixed in. It serves
-  the UI at `http://127.0.0.1:43718` and takes commands over a JSON WebSocket at
-  `ws://127.0.0.1:43717`. C++ (PortAudio + NeuralAmpModelerCore + FFTConvolver +
-  IXWebSocket). GPLv3 — the ASIO SDK rides Steinberg's 2025 GPLv3 relicense.
+- **`helper/`** — a native app that owns the audio path:
+  capture (ASIO on Windows, CoreAudio on macOS) → noise gate → pedals → NAM amp
+  model → tone stack → cabinet IR → pedals → output, plus a metronome, tuner,
+  and drum machine mixed in. It serves the UI at `http://127.0.0.1:43718` and
+  takes commands over a JSON WebSocket at `ws://127.0.0.1:43717`. C++ (PortAudio
+  + NeuralAmpModelerCore + FFTConvolver + IXWebSocket). The engine and protocol
+  are platform-neutral (`src/engine/`, `src/dsp/`); the OS shell (tray icon on
+  Windows, console on mac) lives behind `src/platform/`. GPLv3 — the ASIO SDK
+  rides Steinberg's 2025 GPLv3 relicense.
 - **`web/`** — the entire user experience as one dependency-free
   `index.html` (embedded into the helper at build time): amp knobs, cabinet/model
   pickers, pedalboard, presets, metronome, tuner, and the drum machine.
 - **`docs/`** — product and market-analysis notes.
 
-On macOS the page can instead run its amp engine fully in-browser (WASM NAM over
-CoreAudio, ≈15–25 ms); the native helper is the Windows answer.
+On macOS the same helper builds against CoreAudio, which is low-latency out of
+the box — no ASIO equivalent needed.
 
 ## Why a native helper (the latency story)
 
@@ -64,18 +67,33 @@ See [TASKS.md](TASKS.md) for the full roadmap and history.
 
 ## Build & run
 
-Requires Windows 10+, an ASIO-capable audio interface, CMake, and the
-Visual Studio 2022 Build Tools (MSVC). From the repo root:
+The helper builds on **Windows** (ASIO/WASAPI/WDM-KS, tray app) and **macOS**
+(CoreAudio, console app). The engine, protocol, and web UI are shared; only the
+thin shell in `helper/src/platform/` differs.
+
+**Windows** — requires Windows 10+, an ASIO-capable audio interface, CMake, and
+the Visual Studio 2022 Build Tools (MSVC). From the repo root:
 
 ```bash
 cmake -S helper -B helper/build
 cmake --build helper/build --config Release
 ```
 
-Run `helper/build/Release/webamp-helper.exe` and open
-<http://127.0.0.1:43718>. Amp models (`.nam`) and cabinet impulse responses
-(`.wav`) are loaded from an `assets/` folder next to the exe (override with
-`--assets <dir>`).
+Run `helper/build/Release/webamp-helper.exe` (tray icon) and open
+<http://127.0.0.1:43718>.
+
+**macOS** — requires CMake and the Xcode Command Line Tools:
+
+```bash
+cmake -S helper -B helper/build -DCMAKE_BUILD_TYPE=Release
+cmake --build helper/build --parallel
+./helper/build/webamp-helper --assets assets
+```
+
+Then open <http://127.0.0.1:43718>. Ctrl+C quits.
+
+Amp models (`.nam`) and cabinet impulse responses (`.wav`) are loaded from an
+`assets/` folder next to the exe (override with `--assets <dir>`).
 
 To build the installer, compile with Inno Setup 6:
 `ISCC.exe installer/webamp.iss` → `dist/webamp-setup-*.exe`.

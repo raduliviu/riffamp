@@ -1,0 +1,121 @@
+// HelperEngine: the native helper over its loopback WebSocket.
+// Ports the legacy UI's connection behavior faithfully:
+//  - hello on open, auto-reconnect 2 s after close
+//  - params throttled via setTimeout(33 ms), NOT requestAnimationFrame —
+//    rAF suspends in background/embedded tabs and silently drops changes.
+
+import { Emitter } from "./engine"
+import type { ConnectionStatus, Engine, Unsubscribe } from "./engine"
+import { HELPER_WS_URL } from "./protocol"
+import type {
+  ClientCommand,
+  MetersMessage,
+  ParamId,
+  ServerMessage,
+  StateMessage,
+  TunerMessage,
+} from "./protocol"
+
+const RECONNECT_MS = 2000
+const PARAM_FLUSH_MS = 33
+
+export class HelperEngine implements Engine {
+  readonly kind = "helper" as const
+
+  private ws: WebSocket | null = null
+  private stopped = true
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+  private paramQueue = new Map<ParamId, number>()
+  private flushScheduled = false
+
+  private status$ = new Emitter<ConnectionStatus>()
+  private state$ = new Emitter<StateMessage>()
+  private error$ = new Emitter<string>()
+  private meters$ = new Emitter<MetersMessage>()
+  private tuner$ = new Emitter<TunerMessage>()
+
+  constructor(private url: string = HELPER_WS_URL) {}
+
+  start() {
+    this.stopped = false
+    this.connect()
+  }
+
+  stop() {
+    this.stopped = true
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.ws?.close()
+    this.ws = null
+  }
+
+  send(cmd: ClientCommand) {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(cmd))
+  }
+
+  setParam(id: ParamId, value: number) {
+    this.paramQueue.set(id, value)
+    if (this.flushScheduled) return
+    this.flushScheduled = true
+    setTimeout(() => {
+      this.flushScheduled = false
+      if (this.ws?.readyState !== WebSocket.OPEN) return
+      for (const [pid, v] of this.paramQueue)
+        this.ws.send(JSON.stringify({ type: "setParam", id: pid, value: v }))
+      this.paramQueue.clear()
+    }, PARAM_FLUSH_MS)
+  }
+
+  onStatus(cb: (s: ConnectionStatus) => void): Unsubscribe {
+    return this.status$.subscribe(cb)
+  }
+  onState(cb: (s: StateMessage) => void): Unsubscribe {
+    return this.state$.subscribe(cb)
+  }
+  onError(cb: (m: string) => void): Unsubscribe {
+    return this.error$.subscribe(cb)
+  }
+  onMeters(cb: (m: MetersMessage) => void): Unsubscribe {
+    return this.meters$.subscribe(cb)
+  }
+  onTuner(cb: (t: TunerMessage) => void): Unsubscribe {
+    return this.tuner$.subscribe(cb)
+  }
+
+  private connect() {
+    if (this.stopped) return
+    this.status$.emit("connecting")
+    const ws = new WebSocket(this.url)
+    this.ws = ws
+
+    ws.onopen = () => {
+      this.status$.emit("connected")
+      ws.send(JSON.stringify({ type: "hello" }))
+    }
+    ws.onmessage = (ev) => this.dispatch(JSON.parse(ev.data as string) as ServerMessage)
+    ws.onerror = () => ws.close()
+    ws.onclose = () => {
+      if (this.ws !== ws) return // superseded by a newer socket
+      this.status$.emit("offline")
+      if (!this.stopped)
+        this.reconnectTimer = setTimeout(() => this.connect(), RECONNECT_MS)
+    }
+  }
+
+  private dispatch(msg: ServerMessage) {
+    switch (msg.type) {
+      case "state":
+        this.state$.emit(msg)
+        break
+      case "meters":
+        this.meters$.emit(msg)
+        break
+      case "tuner":
+        this.tuner$.emit(msg)
+        break
+      case "error":
+        this.error$.emit(msg.message)
+        break
+    }
+  }
+}

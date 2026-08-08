@@ -1,9 +1,16 @@
 # webamp — task list
 
 Guitar amp as a web app: browser page = the whole UI; tiny native helper = the
-real-time audio engine (ASIO). Validated by P0 on 2026-07-18: native
-WASAPI-exclusive round-trip **14.4 ms** @64 buffer vs **79.6 ms** in-browser
+real-time audio engine (ASIO on Windows, CoreAudio on macOS). Validated by P0
+on 2026-07-18: native WASAPI-exclusive round-trip **14.4 ms** @64 buffer vs
+**79.6 ms** in-browser
 (full research: [`../amp-latency-research/REPORT.md`](../amp-latency-research/REPORT.md)).
+
+Product direction settled 2026-08-08: **demo-first funnel** — the hosted app
+plays instantly in-browser via a WASM engine (~30 ms, good enough to fall in
+love with the tone), and the 2 MB native helper is the opt-in upgrade to <10 ms.
+Landing page = static SEO page; app = client-side React SPA (no SSR — app state
+lives in the local helper, nothing to server-render).
 
 Status legend: `[ ]` pending · `[~]` in progress · `[x]` done
 
@@ -41,9 +48,21 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` done
 - [ ] **Looper v1** — quantized bar-snap, ~60 s, over the drum groove (Spark 2's headline feature; absent from all browser amps)
 - [ ] **Phone-as-remote polish** — optional LAN bind + pairing security ("no pairing" vs everyone's Bluetooth pain)
 - [ ] *(parking lot, deliberately LAST — after all known features)* **AI integration survey** — candidates identified 2026-07-18: text-to-tone as a *selection* problem over the TONE3000 library (prompt → model + IR + chain preset; cheaper than FUKKAUDIO's synthesis approach), practice-coach feedback over riff history ("your timing drifted on the fast section"), auto-chord detection for play-along (Spark's killer feature; real ML work), smart preset suggestions. Prerequisites: pedalboard, presets, riff history all shipped.
-- [ ] Real UI design
-- [ ] macOS: likely **no helper needed** — in-browser WASM NAM engine (CoreAudio ≈15–25 ms); the web app picks its engine per platform
+- [x] ~~Real UI design~~ — *superseded by P4b (React + shadcn/ui port).*
+- [x] ~~macOS: likely no helper needed~~ — *superseded 2026-08-08: the helper now builds and runs on macOS natively (P4a); the in-browser WASM engine became the cross-platform demo/funnel tier instead (P4c).*
 - [ ] Auto-update strategy
+
+## P4 — Cross-platform + production web *(planned 2026-08-08)*
+
+- [x] **P4a: Cross-platform refactor + macOS port** — DONE 2026-08-08 (`f0250cf`). Monolithic `helper.cpp` (1427 lines) split into `src/engine/` (Engine/DSP chain, device+stream handling, JSON control plane — platform-neutral, extracted verbatim), `src/dsp/` (relocated DSP headers), `src/platform/` (six-function OS shell: Windows keeps tray/mutex/log-redirect; mac = console app, Ctrl+C quits), and a slim `helper.cpp` orchestrator with zero `#ifdef`s. CMake gates ASIO SDK + WASAPI/WDM-KS + p1a/p1b behind WIN32; mac gets CoreAudio for free (`paCoreAudio` needs no ifdef — PortAudio defines the full host-API enum everywhere). **Verified on macOS (arm64): DSP tests pass; helper runs end-to-end — web UI connects, metronome plays through CoreAudio, models/IRs load, device picker lists CoreAudio devices.** Binary: 1.5 MB. *Known quirks: xruns tick up with unsynced default in/out devices (mic+speakers — PortAudio full-duplex clock-drift quirk; one real interface as both should be fine); exit code 1 after clean shutdown (cosmetic, see below).*
+- [ ] **P4b: React + TypeScript + shadcn/ui port** — rebuild `web/index.html` (1000+ lines vanilla) as a Vite SPA: views Play / Practice / Settings + persistent header (connection, mute/panic, meters); an **Engine interface** mirroring the JSON protocol with `HelperEngine` (WS to 127.0.0.1:43717) first and a `DemoEngine` stub; protocol-version check for graceful degradation. `vite-plugin-singlefile` → one dist/index.html so `embed_file.cmake` keeps embedding it (helper serves its own UI offline, zero version skew — property worth keeping). Custom components stay hand-rolled (knobs/meters/drum grid); shadcn covers dialogs/tabs/selects/sliders/toasts.
+- [ ] **P4c: WASM demo engine** *(blocked by P4b)* — Emscripten build of `src/dsp/` + NeuralAmpModelerCore (SIMD) in an AudioWorklet; `getUserMedia` input (echoCancellation/noiseSuppression/autoGainControl **off**, device picker); cab IR via native `ConvolverNode` (free partitioned convolution). Scope: amp path only (gain→gate→NAM→tone→cab). Ship a feather-size model (WASM ≈1.5–2× slower than native). Same Engine interface; auto-switch to helper when detected. Expected RTL: ~20–40 ms mac / 40–80 ms Windows — the felt latency *is* the helper's sales pitch.
+- [ ] **P4d: Self-made placeholder tones** — 1–2 NAM captures we own outright by running the NAM trainer on the output of an open-source (GPL) amp sim (e.g. Guitarix) — one cleanish, one driven — plus one verified-CC0 cab IR (candidate: Jester's Brutal Pack; read the license text at download). Generic names only ("Clean 12" / "Crunch 800" — no trademarks). Research 2026-08-08: no clean CC0 capture ecosystem exists; TONE3000 grants no redistribution rights; pelennor2170/NAM_models is GPL-3 (compatible) but provenance murky.
+- [ ] **P4e: Landing page + hosted /app + onboarding funnel** *(blocked by P4b, P4f, P4g)* — static SEO landing at `/` (plain HTML or Astro); same Vite build deployed at `/app`: tries helper WS → falls back to DemoEngine → background-polls and hot-switches when the helper appears; "download the 2 MB helper" card while disconnected. Safari blocks `ws://127.0.0.1` from https (Chrome/Firefox exempt loopback; see P2b LNA findings) → one-click redirect to the helper-served local UI. Tray keeps opening localhost (bulletproof path).
+- [ ] **P4f: Hosted-origin security — pairing codes** *(the deferred P2c item)* — extend `originAllowed()` beyond localhost for the production origin, gated by a one-time pairing code surfaced by the helper (tray/console) and entered in the page; protects the local WS from drive-by sites enumerating devices/changing params. Must also handle Chrome's LNA permission chip UX (P2b finding e).
+- [ ] **P4g: Asset licensing hygiene before going public** — the current `assets/` (TONE3000 downloads, commercial-style IR pack) must never enter release artifacts or hosted storage (note: P3b installer currently bundles them — swap for P4d pack); purge `assets/` from git history before the repo goes public (`git filter-repo`/BFG — rewrites history, coordinate timing); rename trademarked display names; add drag-and-drop `.nam`/`.wav` import + "get more tones" link (folds into the existing "Model/IR upload from page + TONE3000 browse" backlog item).
+- [ ] **P4h: Re-verify Windows build after the refactor** — pull `f0250cf` on the PC, CMake+VS2022 build, confirm tray/ASIO/UI identical (extraction was verbatim but Windows-unverified).
+- [ ] **P4i: Fix exit code 1 on clean shutdown (macOS)** — SIGINT path prints the full shutdown sequence but the process exits 1; likely IXWebSocket stop() or `Pa_Terminate()` teardown. Cosmetic unless scripts read the exit code.
 
 ## Resolved de-risking (history)
 

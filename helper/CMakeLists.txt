@@ -110,10 +110,10 @@ set(WEB_UI_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/web_ui.h")
 add_custom_command(
   OUTPUT "${WEB_UI_HEADER}"
   COMMAND ${CMAKE_COMMAND}
-          -DIN=${CMAKE_CURRENT_SOURCE_DIR}/../web/index.html
+          -DIN=${CMAKE_CURRENT_SOURCE_DIR}/../web/legacy/index.html
           -DOUT=${WEB_UI_HEADER} -DSYMBOL=kWebUiHtml
           -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake
-  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../web/index.html"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../web/legacy/index.html"
           "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake"
 )
 

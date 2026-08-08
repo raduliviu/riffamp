@@ -18,5 +18,7 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     }
   }, [engine])
 
-  return <EngineContext.Provider value={engine}>{children}</EngineContext.Provider>
+  return (
+    <EngineContext.Provider value={engine}>{children}</EngineContext.Provider>
+  )
 }

@@ -2,30 +2,28 @@
 // state — 25 Hz). Sqrt scaling and the amber-while-muted input bar match the
 // legacy UI.
 
-import { useEffect, useRef } from "react"
-import { useEngine } from "@/engine/use-engine"
+import { useRef } from "react"
+import { useMeters } from "@/engine/use-streams"
 import { useEngineStore } from "@/engine/store"
 
 const pct = (v: number) => `${Math.min(100, Math.sqrt(v) * 110)}%`
 
 export function MiniMeters() {
-  const engine = useEngine()
   const muted = useEngineStore((s) => s.state?.params.mute ?? true)
   const inRef = useRef<HTMLDivElement>(null)
   const outRef = useRef<HTMLDivElement>(null)
 
-  useEffect(
-    () =>
-      engine.onMeters((m) => {
-        if (inRef.current) inRef.current.style.width = pct(m.in)
-        if (outRef.current) outRef.current.style.width = pct(m.out)
-      }),
-    [engine],
-  )
+  useMeters((m) => {
+    if (inRef.current) inRef.current.style.width = pct(m.in)
+    if (outRef.current) outRef.current.style.width = pct(m.out)
+  })
 
   return (
     <div className="flex flex-col gap-1" title="input / output level">
-      <Bar refEl={inRef} className={muted ? "bg-amber-500" : "bg-emerald-500"} />
+      <Bar
+        refEl={inRef}
+        className={muted ? "bg-amber-500" : "bg-emerald-500"}
+      />
       <Bar refEl={outRef} className="bg-emerald-500" />
     </div>
   )

@@ -11,7 +11,9 @@ export function InputGate() {
 
   return (
     <button
-      onClick={() => engine.send({ type: "setParam", id: "mute", value: muted ? 0 : 1 })}
+      onClick={() =>
+        engine.send({ type: "setParam", id: "mute", value: muted ? 0 : 1 })
+      }
       className={
         "w-full rounded-lg border px-4 py-3 text-sm font-semibold tracking-wide transition-colors " +
         (muted

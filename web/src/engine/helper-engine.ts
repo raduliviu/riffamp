@@ -50,7 +50,8 @@ export class HelperEngine implements Engine {
   }
 
   send(cmd: ClientCommand) {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(cmd))
+    if (this.ws?.readyState === WebSocket.OPEN)
+      this.ws.send(JSON.stringify(cmd))
   }
 
   setParam(id: ParamId, value: number) {
@@ -92,7 +93,8 @@ export class HelperEngine implements Engine {
       this.status$.emit("connected")
       ws.send(JSON.stringify({ type: "hello" }))
     }
-    ws.onmessage = (ev) => this.dispatch(JSON.parse(ev.data as string) as ServerMessage)
+    ws.onmessage = (ev) =>
+      this.dispatch(JSON.parse(ev.data as string) as ServerMessage)
     ws.onerror = () => ws.close()
     ws.onclose = () => {
       if (this.ws !== ws) return // superseded by a newer socket

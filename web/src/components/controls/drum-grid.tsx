@@ -2,8 +2,9 @@
 // the engine echoes state back), playhead column driven imperatively from
 // the fast meters stream. Bar/beat boundaries get stronger left borders.
 
-import { useEffect, useRef } from "react"
+import { useRef } from "react"
 import { useEngine } from "@/engine/use-engine"
+import { useMeters } from "@/engine/use-streams"
 import type { DrumsState } from "@/engine/protocol"
 
 const LABELS = ["KICK", "SNARE", "CRASH", "HIHAT", "RIDE"] // engine voice order
@@ -23,16 +24,14 @@ export function DrumGrid({ drums }: { drums: DrumsState }) {
       : Array.from({ length: voices }, (_, i) => i)
 
   // Playhead: toggle a data attribute per column, styled via CSS below.
-  useEffect(
-    () =>
-      engine.onMeters((m) => {
-        if (m.drumStep === shownStep.current || !gridRef.current) return
-        shownStep.current = m.drumStep
-        for (const cell of gridRef.current.querySelectorAll<HTMLElement>("[data-step]"))
-          cell.dataset.playing = String(Number(cell.dataset.step) === m.drumStep)
-      }),
-    [engine],
-  )
+  useMeters((m) => {
+    if (m.drumStep === shownStep.current || !gridRef.current) return
+    shownStep.current = m.drumStep
+    for (const cell of gridRef.current.querySelectorAll<HTMLElement>(
+      "[data-step]"
+    ))
+      cell.dataset.playing = String(Number(cell.dataset.step) === m.drumStep)
+  })
 
   return (
     <div ref={gridRef} className="overflow-x-auto">

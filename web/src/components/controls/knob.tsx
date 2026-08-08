@@ -3,7 +3,7 @@
 // double-click resets. While dragging, the local value wins over server
 // echoes (the caller keeps sending state; we ignore it until release).
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useEffectEvent, useRef, useState } from "react"
 
 export interface KnobProps {
   label: string
@@ -48,26 +48,20 @@ export function Knob({
   const r = c - 6
   const angle = SWEEP_START + ((v - min) / (max - min)) * 270
 
-  // Latest props/value for the once-bound wheel listener; mirrored in an
-  // effect (mutating refs during render is forbidden by react-hooks rules).
-  const liveRef = useRef({ v, min, max, onChange })
-  useEffect(() => {
-    liveRef.current = { v, min, max, onChange }
+  // Wheel must be a manual non-passive listener (React/browsers make wheel
+  // passive, so preventDefault wouldn't stop the page scrolling). The handler
+  // is an effect event: bound once, always sees current props.
+  const onWheel = useEffectEvent((e: WheelEvent) => {
+    e.preventDefault()
+    const step = ((max - min) / 100) * 4
+    onChange(clamp(v - Math.sign(e.deltaY) * step))
   })
-
-  // Wheel must be non-passive to preventDefault (page would scroll).
   useEffect(() => {
     const el = svgRef.current
     if (!el) return
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      const live = liveRef.current
-      const step = ((live.max - live.min) / 100) * 4
-      const next = live.v - Math.sign(e.deltaY) * step
-      live.onChange(Math.min(live.max, Math.max(live.min, next)))
-    }
-    el.addEventListener("wheel", onWheel, { passive: false })
-    return () => el.removeEventListener("wheel", onWheel)
+    const handler = (e: WheelEvent) => onWheel(e)
+    el.addEventListener("wheel", handler, { passive: false })
+    return () => el.removeEventListener("wheel", handler)
   }, [])
 
   return (
@@ -93,7 +87,7 @@ export function Knob({
           if (!drag.current) return
           const next = clamp(
             drag.current.startVal +
-              ((drag.current.startY - e.clientY) * (max - min)) / 150,
+              ((drag.current.startY - e.clientY) * (max - min)) / 150
           )
           setDragValue(next)
           onChange(next)
@@ -108,8 +102,20 @@ export function Knob({
         }}
         onDoubleClick={() => onChange(defaultValue)}
       >
-        <circle cx={c} cy={c} r={r} className="fill-muted/60 stroke-border" strokeWidth="2" />
-        <path d={arcPath(r, c, angle)} fill="none" className="stroke-primary" strokeWidth="4" strokeLinecap="round" />
+        <circle
+          cx={c}
+          cy={c}
+          r={r}
+          className="fill-muted/60 stroke-border"
+          strokeWidth="2"
+        />
+        <path
+          d={arcPath(r, c, angle)}
+          fill="none"
+          className="stroke-primary"
+          strokeWidth="4"
+          strokeLinecap="round"
+        />
         <line
           x1={c}
           y1={c}
@@ -121,7 +127,9 @@ export function Knob({
           transform={`rotate(${angle} ${c} ${c})`}
         />
       </svg>
-      <div className="text-[10px] font-semibold tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-semibold tracking-wider text-muted-foreground">
+        {label}
+      </div>
       <div className="text-xs tabular-nums">{format(v)}</div>
     </div>
   )

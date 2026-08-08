@@ -32,14 +32,14 @@ const majorMinor = (v: string) => v.split(".").slice(0, 2).join(".")
 export function bindEngineToStore(engine: Engine): () => void {
   const unsubs = [
     engine.onStatus((status) =>
-      useEngineStore.setState({ status, kind: engine.kind }),
+      useEngineStore.setState({ status, kind: engine.kind })
     ),
     engine.onState((state) =>
       useEngineStore.setState({
         state,
         versionMismatch:
           majorMinor(state.version) !== majorMinor(KNOWN_PROTOCOL_VERSION),
-      }),
+      })
     ),
     engine.onError((lastError) => useEngineStore.setState({ lastError })),
   ]

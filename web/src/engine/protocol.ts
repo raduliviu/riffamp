@@ -9,9 +9,22 @@ export const HELPER_WS_URL = "ws://127.0.0.1:43717"
 export const KNOWN_PROTOCOL_VERSION = "0.2.0"
 
 export type ParamId =
-  | "gainIn" | "gainOut" | "gate" | "bass" | "mid" | "treble" | "mute"
-  | "metroOn" | "metroAccent" | "metroBpm" | "metroBeats" | "metroVol"
-  | "tunerOn" | "inCh" | "drumOn" | "drumVol"
+  | "gainIn"
+  | "gainOut"
+  | "gate"
+  | "bass"
+  | "mid"
+  | "treble"
+  | "mute"
+  | "metroOn"
+  | "metroAccent"
+  | "metroBpm"
+  | "metroBeats"
+  | "metroVol"
+  | "tunerOn"
+  | "inCh"
+  | "drumOn"
+  | "drumVol"
 
 export type PedalType = "comp" | "drive" | "chorus" | "delay" | "reverb"
 export type Placement = "pre" | "post"
@@ -116,7 +129,8 @@ export interface ErrorMessage {
   message: string
 }
 
-export type ServerMessage = StateMessage | MetersMessage | TunerMessage | ErrorMessage
+export type ServerMessage =
+  StateMessage | MetersMessage | TunerMessage | ErrorMessage
 
 export type ClientCommand =
   | { type: "hello" }

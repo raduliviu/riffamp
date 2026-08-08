@@ -32,7 +32,9 @@ export function ConnectionChip() {
           {info.xruns > 0 && ` · xruns ${info.xruns}`}
         </span>
       )}
-      {versionMismatch && <Badge variant="destructive">protocol mismatch</Badge>}
+      {versionMismatch && (
+        <Badge variant="destructive">protocol mismatch</Badge>
+      )}
     </div>
   )
 }

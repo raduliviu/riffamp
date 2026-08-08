@@ -51,6 +51,7 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` done
 - [x] ~~Real UI design~~ — *superseded by P4b (React + shadcn/ui port).*
 - [x] ~~macOS: likely no helper needed~~ — *superseded 2026-08-08: the helper now builds and runs on macOS natively (P4a); the in-browser WASM engine became the cross-platform demo/funnel tier instead (P4c).*
 - [ ] Auto-update strategy
+- [ ] *(parking lot)* **Rust helper rewrite** — feasible as of 2026-08 with zero C++ FFI: `nam-rs` 0.4 (pure-Rust NAM incl. A2, 1e-5 parity, RT-safety test-enforced — but young, unbenchmarked vs the C++ A2 fast path), `fft-convolver` (Rust port of our exact IR convolver), `cpal` (CoreAudio/WASAPI/ASIO; ASIO least proven vs our measured 7.62 ms on PortAudio). Not worth a rewrite while the C++ helper is done and stable; revisit if maintenance hurts or nam-rs proves faster. C++ core stays where new NAM architectures land first.
 
 ## P4 — Cross-platform + production web *(planned 2026-08-08)*
 

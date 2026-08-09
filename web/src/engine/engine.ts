@@ -5,6 +5,7 @@ import type {
   ClientCommand,
   MetersMessage,
   ParamId,
+  PedalType,
   StateMessage,
   TunerMessage,
 } from "./protocol"
@@ -28,6 +29,8 @@ export interface Engine {
   send(cmd: ClientCommand): void
   /** Throttled param set — knob drags coalesce to one send per ~33 ms. */
   setParam(id: ParamId, value: number): void
+  /** Throttled pedal-param set — same coalescing, keyed per pedal+field. */
+  setPedalParam(pedal: PedalType, field: string, value: number): void
 
   onStatus(cb: (status: ConnectionStatus) => void): Unsubscribe
   onState(cb: (state: StateMessage) => void): Unsubscribe

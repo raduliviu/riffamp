@@ -8,6 +8,7 @@ import type {
   ClientCommand,
   MetersMessage,
   ParamId,
+  PedalType,
   StateMessage,
   TunerMessage,
 } from "./protocol"
@@ -24,6 +25,7 @@ export class DemoEngine implements Engine {
 
   send(_cmd: ClientCommand) {}
   setParam(_id: ParamId, _value: number) {}
+  setPedalParam(_pedal: PedalType, _field: string, _value: number) {}
 
   onStatus(cb: (s: ConnectionStatus) => void): Unsubscribe {
     return this.status$.subscribe(cb)

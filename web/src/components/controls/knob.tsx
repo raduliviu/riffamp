@@ -10,7 +10,8 @@ export interface KnobProps {
   value: number
   min: number
   max: number
-  defaultValue: number
+  /** Double-click resets to this. Omit to disable reset (e.g. pedal knobs). */
+  defaultValue?: number
   format: (v: number) => string
   onChange: (v: number) => void
   size?: number
@@ -100,7 +101,9 @@ export function Knob({
           drag.current = null
           setDragValue(null)
         }}
-        onDoubleClick={() => onChange(defaultValue)}
+        onDoubleClick={() =>
+          defaultValue !== undefined && onChange(defaultValue)
+        }
       >
         <circle
           cx={c}

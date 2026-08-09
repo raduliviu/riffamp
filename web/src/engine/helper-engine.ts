@@ -11,6 +11,7 @@ import type {
   ClientCommand,
   MetersMessage,
   ParamId,
+  PedalType,
   ServerMessage,
   StateMessage,
   TunerMessage,
@@ -26,7 +27,9 @@ export class HelperEngine implements Engine {
   private stopped = true
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
-  private paramQueue = new Map<ParamId, number>()
+  // Coalesced command queue, keyed so rapid knob drags collapse to one send
+  // per key per flush (33 ms). Keys: `param:<id>` and `pedal:<type>:<field>`.
+  private queue = new Map<string, ClientCommand>()
   private flushScheduled = false
 
   private status$ = new Emitter<ConnectionStatus>()
@@ -55,15 +58,27 @@ export class HelperEngine implements Engine {
   }
 
   setParam(id: ParamId, value: number) {
-    this.paramQueue.set(id, value)
+    this.enqueue(`param:${id}`, { type: "setParam", id, value })
+  }
+
+  setPedalParam(pedal: PedalType, field: string, value: number) {
+    this.enqueue(`pedal:${pedal}:${field}`, {
+      type: "setPedal",
+      pedal,
+      field,
+      value,
+    })
+  }
+
+  private enqueue(key: string, cmd: ClientCommand) {
+    this.queue.set(key, cmd)
     if (this.flushScheduled) return
     this.flushScheduled = true
     setTimeout(() => {
       this.flushScheduled = false
       if (this.ws?.readyState !== WebSocket.OPEN) return
-      for (const [pid, v] of this.paramQueue)
-        this.ws.send(JSON.stringify({ type: "setParam", id: pid, value: v }))
-      this.paramQueue.clear()
+      for (const cmd of this.queue.values()) this.ws.send(JSON.stringify(cmd))
+      this.queue.clear()
     }, PARAM_FLUSH_MS)
   }
 

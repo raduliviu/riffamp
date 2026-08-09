@@ -45,7 +45,7 @@ function StepperSelect({
         >
           <ChevronLeft className="size-4" />
         </Button>
-        <Select value={value} onValueChange={onSelect}>
+        <Select value={value} onValueChange={(v) => v && onSelect(v)}>
           <SelectTrigger className="flex-1">
             <SelectValue />
           </SelectTrigger>

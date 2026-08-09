@@ -105,15 +105,18 @@ if(WIN32)
   target_link_libraries(p1b PRIVATE portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver)
 endif()
 
-# Embed the web UI into the helper so it serves its own page.
+# Embed the web UI into the helper so it serves its own page. This is the
+# committed Vite single-file build (web/dist/index.html) — building the helper
+# never needs Node; run `pnpm --dir web build` after changing the UI.
 set(WEB_UI_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/web_ui.h")
+set(WEB_UI_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../web/dist/index.html")
 add_custom_command(
   OUTPUT "${WEB_UI_HEADER}"
   COMMAND ${CMAKE_COMMAND}
-          -DIN=${CMAKE_CURRENT_SOURCE_DIR}/../web/legacy/index.html
+          -DIN=${WEB_UI_SOURCE}
           -DOUT=${WEB_UI_HEADER} -DSYMBOL=kWebUiHtml
           -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake
-  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../web/legacy/index.html"
+  DEPENDS "${WEB_UI_SOURCE}"
           "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake"
 )
 

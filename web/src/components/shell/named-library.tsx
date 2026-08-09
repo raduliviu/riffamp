@@ -49,7 +49,7 @@ export function NamedLibrary({
   return (
     <div className="space-y-2">
       <div className="flex gap-2">
-        <Select value={selected} onValueChange={load}>
+        <Select value={selected} onValueChange={(v) => v && load(v)}>
           <SelectTrigger className="flex-1">
             <SelectValue placeholder={selectPlaceholder} />
           </SelectTrigger>

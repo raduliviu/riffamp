@@ -38,7 +38,10 @@ export class HelperEngine implements Engine {
   private meters$ = new Emitter<MetersMessage>()
   private tuner$ = new Emitter<TunerMessage>()
 
-  constructor(private url: string = HELPER_WS_URL) {}
+  private url: string
+  constructor(url: string = HELPER_WS_URL) {
+    this.url = url
+  }
 
   start() {
     this.stopped = false

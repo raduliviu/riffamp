@@ -33,6 +33,10 @@ void fatalAlert(const std::string&) {
 }
 
 bool initApp() {
+    // Line-buffer stdout so logs (and the pairing code) appear promptly even
+    // when redirected to a file; the default block buffering hides them until
+    // the buffer fills or the process exits.
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::signal(SIGINT, [](int) { gRunning.store(false); });
     std::signal(SIGTERM, [](int) { gRunning.store(false); });
     return true;

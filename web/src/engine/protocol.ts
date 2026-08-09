@@ -129,11 +129,29 @@ export interface ErrorMessage {
   message: string
 }
 
+// Pairing (P4f): a non-local origin (the hosted app) gets `needPair` on connect
+// and must send { type: "pair", code } with the code the helper prints on the
+// local machine; a wrong code yields `pairFailed`. Local origins never see these.
+export interface NeedPairMessage {
+  type: "needPair"
+}
+
+export interface PairFailedMessage {
+  type: "pairFailed"
+  attemptsLeft: number
+}
+
 export type ServerMessage =
-  StateMessage | MetersMessage | TunerMessage | ErrorMessage
+  | StateMessage
+  | MetersMessage
+  | TunerMessage
+  | ErrorMessage
+  | NeedPairMessage
+  | PairFailedMessage
 
 export type ClientCommand =
   | { type: "hello" }
+  | { type: "pair"; code: string }
   | { type: "panic" }
   | { type: "setParam"; id: ParamId; value: number }
   | { type: "setPedal"; pedal: PedalType; field: string; value: number }

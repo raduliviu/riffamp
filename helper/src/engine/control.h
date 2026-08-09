@@ -556,13 +556,4 @@ struct Control {
     }
 };
 
-inline bool originAllowed(const std::string& origin) {
-    if (origin.empty()) return true;  // native tools / same-machine scripts
-    const std::string o = lower(origin);
-    for (const char* prefix : {"http://localhost", "https://localhost", "http://127.0.0.1",
-                               "https://127.0.0.1"})
-        if (o.rfind(prefix, 0) == 0) return true;
-    return false;  // TODO(P2c): pairing-code flow for the real hosted origin
-}
-
 }  // namespace webamp

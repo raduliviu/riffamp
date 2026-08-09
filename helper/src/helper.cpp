@@ -20,6 +20,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -27,6 +29,7 @@
 #include "engine.h"
 #include "audio_io.h"
 #include "control.h"
+#include "pairing.h"
 #include "platform.h"
 
 #include <ixwebsocket/IXHttpServer.h>
@@ -139,40 +142,115 @@ int main(int argc, char** argv) {
     std::printf("Audio running: %d Hz, buffer %d — %s + %s\n", engine.opt.sr, engine.opt.buffer,
                 engine.modelName.c_str(), engine.irName.c_str());
 
+    // Pairing: local origins are trusted; the hosted app must pair once with a
+    // code printed here. Per-connection trust is tracked by socket pointer.
+    Pairing pairing;
+    pairing.init(platform::exeDir() / "webamp-paired.json");
+    constexpr int kMaxPairAttempts = 5;
+    struct Conn { bool trusted = false; std::string origin; int attempts = 0; };
+    std::map<ix::WebSocket*, Conn> conns;
+    std::mutex connsMx;
+
     ix::initNetSystem();
     ix::WebSocketServer server(engine.opt.port, "127.0.0.1");
+
+    // Send a payload only to paired/local connections — an unpaired origin must
+    // never receive state (device names, rig) or meters.
+    auto broadcast = [&](const std::string& s) {
+        std::lock_guard<std::mutex> lk(connsMx);
+        for (auto&& client : server.getClients()) {
+            const auto it = conns.find(client.get());
+            if (it != conns.end() && it->second.trusted) client->send(s);
+        }
+    };
+
     server.setOnClientMessageCallback([&](std::shared_ptr<ix::ConnectionState> state,
                                           ix::WebSocket& ws, const ix::WebSocketMessagePtr& msg) {
         if (msg->type == ix::WebSocketMessageType::Open) {
             const auto it = msg->openInfo.headers.find("Origin");
             const std::string origin = it != msg->openInfo.headers.end() ? it->second : "";
-            if (!originAllowed(origin)) {
-                std::printf("Rejected connection from origin: %s\n", origin.c_str());
-                ws.close(1008, "origin not allowed");
+            const bool trusted = pairing.trusted(origin);
+            {
+                std::lock_guard<std::mutex> lk(connsMx);
+                conns[&ws] = Conn{trusted, origin, 0};
+            }
+            if (trusted) {
+                std::printf("Client connected (origin: %s)\n",
+                            origin.empty() ? "<none>" : origin.c_str());
+            } else {
+                std::printf("Unpaired origin awaiting pairing: %s\n", origin.c_str());
+                ws.send(json({{"type", "needPair"}}).dump());
+            }
+            return;
+        }
+        if (msg->type == ix::WebSocketMessageType::Close) {
+            std::lock_guard<std::mutex> lk(connsMx);
+            conns.erase(&ws);
+            return;
+        }
+        if (msg->type != ix::WebSocketMessageType::Message) return;
+
+        bool trusted;
+        std::string origin;
+        {
+            std::lock_guard<std::mutex> lk(connsMx);
+            const auto it = conns.find(&ws);
+            trusted = it != conns.end() && it->second.trusted;
+            if (it != conns.end()) origin = it->second.origin;
+        }
+
+        // Untrusted connections may only pair. Everything else → needPair.
+        if (!trusted) {
+            json in;
+            try {
+                in = json::parse(msg->str);
+            } catch (...) {
+                ws.send(json({{"type", "error"}, {"message", "bad json"}}).dump());
                 return;
             }
-            std::printf("Client connected (origin: %s)\n",
-                        origin.empty() ? "<none>" : origin.c_str());
-        } else if (msg->type == ix::WebSocketMessageType::Message) {
-            json reply;
-            bool changed = false;
-            try {
-                reply = control.handle(json::parse(msg->str), &changed);
-            } catch (const std::exception& ex) {
-                reply = {{"type", "error"}, {"message", ex.what()}};
+            if (in.value("type", "") != "pair") {
+                ws.send(json({{"type", "needPair"}}).dump());
+                return;
             }
-            if (changed) {
-                const std::string s = reply.dump();
-                for (auto&& client : server.getClients()) client->send(s);
+            if (pairing.codeMatches(in.value("code", ""))) {
+                pairing.approve(origin);
+                {
+                    std::lock_guard<std::mutex> lk(connsMx);
+                    if (auto it = conns.find(&ws); it != conns.end()) it->second.trusted = true;
+                }
+                std::printf("Paired new origin: %s\n", origin.c_str());
+                ws.send(control.stateJson().dump());  // like hello: client is now live
             } else {
-                ws.send(reply.dump());
+                int left = 0;
+                bool tooMany = false;
+                {
+                    std::lock_guard<std::mutex> lk(connsMx);
+                    if (auto it = conns.find(&ws); it != conns.end()) {
+                        tooMany = ++it->second.attempts >= kMaxPairAttempts;
+                        left = kMaxPairAttempts - it->second.attempts;
+                    }
+                }
+                if (tooMany) ws.close(1008, "too many pairing attempts");
+                else ws.send(json({{"type", "pairFailed"}, {"attemptsLeft", left}}).dump());
             }
+            return;
         }
+
+        json reply;
+        bool changed = false;
+        try {
+            reply = control.handle(json::parse(msg->str), &changed);
+        } catch (const std::exception& ex) {
+            reply = {{"type", "error"}, {"message", ex.what()}};
+        }
+        if (changed) broadcast(reply.dump());
+        else ws.send(reply.dump());
     });
     auto res = server.listen();
     if (!res.first) return fatal("Control port busy (is webamp already running?): " + res.second);
     server.start();
     std::printf("Control server: ws://127.0.0.1:%d\n", engine.opt.port);
+    std::printf("Pairing code (only the hosted app needs this): %s\n", pairing.code.c_str());
 
     // UI server: the helper serves its own page.
     ix::HttpServer ui(platform::kUiPort, "127.0.0.1");
@@ -193,10 +271,9 @@ int main(int argc, char** argv) {
     ui.start();
     std::printf("UI: %s\n", platform::kUiUrl);
 
-    platform::gToggleMute = [&engine, &control, &server]() {
+    platform::gToggleMute = [&engine, &control, &broadcast]() {
         engine.mute.store(!engine.mute.load());
-        const std::string s = control.stateJson().dump();
-        for (auto&& client : server.getClients()) client->send(s);
+        broadcast(control.stateJson().dump());
     };
     platform::startShell();
 
@@ -230,8 +307,7 @@ int main(int argc, char** argv) {
                 t["note"] = info.name;
                 t["cents"] = info.cents;
             }
-            const std::string ts = t.dump();
-            for (auto&& client : clients) client->send(ts);
+            broadcast(t.dump());
         }
         const json m = {{"type", "meters"},
                         {"in", engine.peakIn.exchange(0.0f)},
@@ -240,8 +316,7 @@ int main(int argc, char** argv) {
                         {"beatInBar", engine.beatInBar.load(std::memory_order_relaxed)},
                         {"drumStep", engine.drumOn.load(std::memory_order_relaxed)
                                          ? engine.drums.curStep.load(std::memory_order_relaxed) : -1}};
-        const std::string s = m.dump();
-        for (auto&& client : clients) client->send(s);
+        broadcast(m.dump());
     }
 
     if (control.cfgDirty.load()) audio.persist();  // flush any pending rig change

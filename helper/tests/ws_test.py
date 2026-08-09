@@ -209,15 +209,20 @@ check("re-mute", state["params"]["mute"] is True)
 
 ws.close()
 
-# 7. bad origin rejected
+# 7. non-local origin must pair before anything (P4f). It may connect, but
+# gets needPair and cannot reach state without the code — no data leaks.
+# (Full pairing flow is covered by pairing_test.py.)
 try:
     bad = websocket.create_connection("ws://127.0.0.1:43717", timeout=5,
                                       origin="https://evil.example.com")
+    opened = json.loads(bad.recv())  # server greets unpaired origins with needPair
     bad.send(json.dumps({"type": "hello"}))
-    resp = bad.recv()
-    # A server-initiated close surfaces as an empty read; any state reply = leak.
-    check("evil origin rejected", resp == "", f"got: {resp[:60]}")
+    hello_resp = json.loads(bad.recv())
+    check("unpaired origin gets needPair, never state",
+          opened.get("type") == "needPair" and hello_resp.get("type") != "state",
+          f"open={opened.get('type')} hello={hello_resp.get('type')}")
+    bad.close()
 except Exception as e:
-    check("evil origin rejected", True, type(e).__name__)
+    check("unpaired origin gets needPair, never state", False, type(e).__name__)
 
 print("\n" + ("ALL PASS" if not FAILURES else f"FAILURES: {FAILURES}"))

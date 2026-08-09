@@ -1,9 +1,30 @@
-// Practice: tuner, metronome, drum machine, grooves. Lands in P4b-6.
+// Practice: tuner, metronome, drum machine + groove library.
+
+import { Section } from "@/components/shell/section"
+import { useEngineStore } from "@/engine/store"
+import { DrumSection } from "./practice/drum-section"
+import { MetronomeSection } from "./practice/metronome-section"
+import { TunerSection } from "./practice/tuner-section"
 
 export function PracticeView() {
+  const state = useEngineStore((s) => s.state)
+  if (!state) return null
+
   return (
-    <div className="py-16 text-center text-sm text-muted-foreground">
-      Tuner, metronome & drums — coming in P4b-6.
+    <div className="space-y-4">
+      <Section title="TUNER">
+        <TunerSection />
+      </Section>
+      <Section title="METRONOME">
+        <MetronomeSection />
+      </Section>
+      <Section title="DRUM MACHINE">
+        <DrumSection
+          drums={state.drums}
+          drumVol={state.params.drumVol}
+          grooves={state.grooves}
+        />
+      </Section>
     </div>
   )
 }

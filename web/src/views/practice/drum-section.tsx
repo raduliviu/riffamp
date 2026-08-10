@@ -4,7 +4,6 @@
 // change, per the legacy note).
 
 import { DrumGrid } from "@/components/controls/drum-grid"
-import { Knob } from "@/components/controls/knob"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -56,11 +55,9 @@ function GridSelect({
 
 export function DrumSection({
   drums,
-  drumVol,
   grooves,
 }: {
   drums: DrumsState
-  drumVol: number
   grooves: string[]
 }) {
   const engine = useEngine()
@@ -117,18 +114,6 @@ export function DrumSection({
           options={RES_OPTIONS}
           onChange={(v) => setGrid({ subdiv: v })}
         />
-        <div className="ml-auto">
-          <Knob
-            label="DRUMS"
-            value={drumVol}
-            min={0}
-            max={2}
-            defaultValue={0.6}
-            format={(v) => v.toFixed(2)}
-            onChange={(v) => engine.setParam("drumVol", v)}
-            size={50}
-          />
-        </div>
       </div>
 
       <DrumGrid drums={drums} />

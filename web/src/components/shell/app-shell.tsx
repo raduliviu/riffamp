@@ -9,6 +9,7 @@ import { PracticeView } from "@/views/practice-view"
 import { SettingsView } from "@/views/settings-view"
 import { Header } from "./header"
 import { InputGate } from "./input-gate"
+import { MixerFooter } from "./mixer-footer"
 import { OfflineCard } from "./offline-card"
 
 const TAB_KEY = "webamp:tab"
@@ -28,25 +29,28 @@ export function AppShell() {
       {status !== "connected" ? (
         <OfflineCard />
       ) : (
-        <main className="flex flex-1 flex-col gap-4 p-4">
-          <InputGate />
-          <Tabs value={tab} onValueChange={selectTab}>
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="play">Play</TabsTrigger>
-              <TabsTrigger value="practice">Practice</TabsTrigger>
-              <TabsTrigger value="settings">Settings</TabsTrigger>
-            </TabsList>
-            <TabsContent value="play">
-              <PlayView />
-            </TabsContent>
-            <TabsContent value="practice">
-              <PracticeView />
-            </TabsContent>
-            <TabsContent value="settings">
-              <SettingsView />
-            </TabsContent>
-          </Tabs>
-        </main>
+        <>
+          <main className="flex flex-1 flex-col gap-4 p-4">
+            <InputGate />
+            <Tabs value={tab} onValueChange={selectTab}>
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="play">Play</TabsTrigger>
+                <TabsTrigger value="practice">Practice</TabsTrigger>
+                <TabsTrigger value="settings">Settings</TabsTrigger>
+              </TabsList>
+              <TabsContent value="play">
+                <PlayView />
+              </TabsContent>
+              <TabsContent value="practice">
+                <PracticeView />
+              </TabsContent>
+              <TabsContent value="settings">
+                <SettingsView />
+              </TabsContent>
+            </Tabs>
+          </main>
+          <MixerFooter />
+        </>
       )}
     </div>
   )

@@ -5,7 +5,6 @@
 import { useEffect, useEffectEvent, useState } from "react"
 import { Minus, Plus } from "lucide-react"
 import { BeatDots } from "@/components/controls/beat-dots"
-import { Knob } from "@/components/controls/knob"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useEngine } from "@/engine/use-engine"
@@ -198,16 +197,6 @@ export function MetronomeSection() {
           type
         </div>
       </div>
-
-      <Knob
-        label="CLICK"
-        value={p.metroVol}
-        min={0}
-        max={2}
-        defaultValue={0.5}
-        format={(v) => v.toFixed(2)}
-        onChange={(v) => engine.setParam("metroVol", v)}
-      />
     </div>
   )
 }

@@ -19,11 +19,7 @@ export function PracticeView() {
         <MetronomeSection />
       </Section>
       <Section title="DRUM MACHINE">
-        <DrumSection
-          drums={state.drums}
-          drumVol={state.params.drumVol}
-          grooves={state.grooves}
-        />
+        <DrumSection drums={state.drums} grooves={state.grooves} />
       </Section>
     </div>
   )

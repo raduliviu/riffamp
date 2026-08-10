@@ -8,7 +8,6 @@ import { PlayView } from "@/views/play-view"
 import { PracticeView } from "@/views/practice-view"
 import { SettingsView } from "@/views/settings-view"
 import { Header } from "./header"
-import { InputGate } from "./input-gate"
 import { MixerFooter } from "./mixer-footer"
 import { OfflineCard } from "./offline-card"
 
@@ -31,7 +30,6 @@ export function AppShell() {
       ) : (
         <>
           <main className="flex flex-1 flex-col gap-4 p-4">
-            <InputGate />
             <Tabs value={tab} onValueChange={selectTab}>
               <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="play">Play</TabsTrigger>

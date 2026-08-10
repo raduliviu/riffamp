@@ -1,8 +1,9 @@
-// Persistent monitor mix: the three output levels you balance by ear while
-// playing along — guitar, metronome, drums — pinned below the tabs so you
-// never have to switch views to adjust them. Each fader binds to the same
-// engine param as its (former) in-tab knob; the Drums fader dims when the
-// drum machine is stopped, since it's making no sound.
+// Persistent monitor mix: the levels you balance by ear while playing —
+// guitar, metronome, drums — pinned below the tabs so you never switch views
+// to adjust them. The guitar is a full channel strip: its enable/mute toggle
+// (the engine starts muted for safety) sits next to its fader, mirroring a
+// mixer channel. Each channel dims when its source is silent — guitar when
+// muted, drums when the machine is stopped.
 
 import { useState } from "react"
 import { useEngine } from "@/engine/use-engine"
@@ -18,6 +19,7 @@ function Fader({
   defaultValue,
   format,
   disabled = false,
+  dim = false,
 }: {
   label: string
   param: ParamId
@@ -26,7 +28,10 @@ function Fader({
   max: number
   defaultValue: number
   format: (v: number) => string
+  /** Disable interaction (source can't be adjusted, e.g. drums stopped). */
   disabled?: boolean
+  /** Visually fade but stay interactive (e.g. guitar muted — preset a level). */
+  dim?: boolean
 }) {
   const engine = useEngine()
   // While dragging, the local value wins over server echoes (same trick as Knob).
@@ -35,7 +40,7 @@ function Fader({
 
   return (
     <div
-      className={`flex flex-1 items-center gap-2 ${disabled ? "opacity-40" : ""}`}
+      className={`flex flex-1 items-center gap-2 ${disabled || dim ? "opacity-50" : ""}`}
     >
       <span className="w-16 shrink-0 text-[10px] font-semibold tracking-wider text-muted-foreground">
         {label}
@@ -70,27 +75,48 @@ function Fader({
 }
 
 export function MixerFooter() {
+  const engine = useEngine()
   const params = useEngineStore((s) => s.state?.params)
   const drumsOn = useEngineStore((s) => s.state?.drums.on ?? false)
   if (!params) return null
 
+  const muted = params.mute
   const num2 = (n: number) => n.toFixed(2)
 
   return (
     <footer className="sticky bottom-0 z-10 border-t border-border bg-background/95 backdrop-blur">
       <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 py-2 sm:flex-row sm:items-center sm:gap-6">
-        <span className="text-[10px] font-semibold tracking-widest text-muted-foreground">
-          MIX
-        </span>
-        <Fader
-          label="GUITAR"
-          param="gainOut"
-          value={params.gainOut}
-          min={0}
-          max={4}
-          defaultValue={1}
-          format={num2}
-        />
+        {/* Guitar channel: enable/mute + level. Muted starts every session. */}
+        <div className="flex flex-1 items-center gap-2">
+          <button
+            onClick={() =>
+              engine.send({
+                type: "setParam",
+                id: "mute",
+                value: muted ? 0 : 1,
+              })
+            }
+            className={
+              "shrink-0 rounded-md border px-2.5 py-1 text-[10px] font-semibold tracking-wide transition-colors " +
+              (muted
+                ? "border-amber-500/60 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25"
+                : "border-emerald-500/60 bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25")
+            }
+            title="Enable or mute the guitar input"
+          >
+            {muted ? "▶ ENABLE" : "● LIVE"}
+          </button>
+          <Fader
+            label="GUITAR"
+            param="gainOut"
+            value={params.gainOut}
+            min={0}
+            max={4}
+            defaultValue={1}
+            format={num2}
+            dim={muted}
+          />
+        </div>
         <Fader
           label="METRONOME"
           param="metroVol"

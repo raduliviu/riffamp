@@ -9,7 +9,7 @@
 // same size and never resizes as labels, values, or the ENABLE/LIVE toggle
 // change. The strip wraps to a second row rather than growing the sliders.
 
-import { useState } from "react"
+import { useEffect, useEffectEvent, useRef, useState } from "react"
 import { useEngine } from "@/engine/use-engine"
 import { useEngineStore } from "@/engine/store"
 import type { ParamId } from "@/engine/protocol"
@@ -41,6 +41,26 @@ function Fader({
   // While dragging, the local value wins over server echoes (same trick as Knob).
   const [drag, setDrag] = useState<number | null>(null)
   const v = drag ?? value
+  const clamp = (x: number) => Math.min(max, Math.max(min, x))
+
+  // Wheel adjusts on hover, matching the knobs. Native range ignores wheel, so
+  // this is a manual non-passive listener (React makes wheel passive, so
+  // preventDefault wouldn't stop the page scrolling). Effect event: bound once,
+  // always sees current props.
+  const inputRef = useRef<HTMLInputElement>(null)
+  const onWheel = useEffectEvent((e: WheelEvent) => {
+    if (disabled) return
+    e.preventDefault()
+    const step = ((max - min) / 100) * 4 // same notch size as Knob
+    engine.setParam(param, clamp((drag ?? value) - Math.sign(e.deltaY) * step))
+  })
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => onWheel(e)
+    el.addEventListener("wheel", handler, { passive: false })
+    return () => el.removeEventListener("wheel", handler)
+  }, [])
 
   return (
     <div
@@ -50,6 +70,7 @@ function Fader({
         {label}
       </span>
       <input
+        ref={inputRef}
         type="range"
         min={min}
         max={max}

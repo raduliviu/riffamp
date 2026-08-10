@@ -4,6 +4,10 @@
 // (the engine starts muted for safety) sits next to its fader, mirroring a
 // mixer channel. Each channel dims when its source is silent — guitar when
 // muted, drums when the machine is stopped.
+//
+// Sliders and the enable button are fixed-width (no flex): every fader is the
+// same size and never resizes as labels, values, or the ENABLE/LIVE toggle
+// change. The strip wraps to a second row rather than growing the sliders.
 
 import { useState } from "react"
 import { useEngine } from "@/engine/use-engine"
@@ -40,7 +44,7 @@ function Fader({
 
   return (
     <div
-      className={`flex flex-1 items-center gap-2 ${disabled || dim ? "opacity-50" : ""}`}
+      className={`flex items-center gap-2 ${disabled || dim ? "opacity-50" : ""}`}
     >
       <span className="w-16 shrink-0 text-[10px] font-semibold tracking-wider text-muted-foreground">
         {label}
@@ -63,7 +67,7 @@ function Fader({
           setDrag(null)
           engine.setParam(param, defaultValue)
         }}
-        className="h-1.5 w-full min-w-16 flex-1 cursor-pointer accent-primary"
+        className="h-1.5 w-28 shrink-0 cursor-pointer accent-primary"
         aria-label={`${label} level`}
         title="Double-click to reset"
       />
@@ -85,9 +89,9 @@ export function MixerFooter() {
 
   return (
     <footer className="sticky bottom-0 z-10 border-t border-border bg-background/95 backdrop-blur">
-      <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 py-2 sm:flex-row sm:items-center sm:gap-6">
+      <div className="mx-auto flex max-w-4xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-2">
         {/* Guitar channel: enable/mute + level. Muted starts every session. */}
-        <div className="flex flex-1 items-center gap-2">
+        <div className="flex items-center gap-2">
           <button
             onClick={() =>
               engine.send({
@@ -97,7 +101,7 @@ export function MixerFooter() {
               })
             }
             className={
-              "shrink-0 rounded-md border px-2.5 py-1 text-[10px] font-semibold tracking-wide transition-colors " +
+              "w-24 shrink-0 rounded-md border px-2 py-1 text-center text-[10px] font-semibold tracking-wide transition-colors " +
               (muted
                 ? "border-amber-500/60 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25"
                 : "border-emerald-500/60 bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25")

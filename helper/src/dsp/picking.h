@@ -8,6 +8,15 @@
 // `fast`, so ringing never retriggers regardless of absolute level (accents
 // followed by soft notes both count). A short refractory window guards the
 // attack transient itself. Runs on the audio thread: O(1)/sample, no alloc.
+//
+// The detector listens through a ~1.8 kHz one-pole high-pass (field report:
+// palm mutes detected better than open notes). Rise detection alone favors
+// short percussive notes — a ringing string holds the lagging envelope up, so
+// the next attack never clears the rise ratio. But the pick transient is
+// broadband while the ring is fundamental + low harmonics (guitar fundamentals
+// top out ~1.3 kHz), so above the filter the ring largely vanishes and every
+// attack still punches through — open notes now rise from a low floor exactly
+// like palm mutes. Bonus: mains hum can't touch kMinLevel anymore.
 
 #pragma once
 
@@ -21,9 +30,11 @@ namespace webamp {
 struct OnsetDetector {
     float relCoef = 0;  // fast-envelope release (~15 ms)
     float preK = 0;     // lagging-envelope smoothing (~10 ms)
+    float hpA = 0;      // one-pole high-pass coefficient (~1.8 kHz)
     int refractorySamples = 0;
 
     float fast = 0, pre = 0;
+    float hpX = 0, hpY = 0;  // high-pass state
     int refr = 0;
 
     // sens 0..1 (0.5 default): higher = more sensitive (lower rise ratio).
@@ -33,6 +44,8 @@ struct OnsetDetector {
     void configure(float sr) {
         relCoef = std::exp(-1.0f / (0.015f * sr));
         preK = 1.0f - std::exp(-1.0f / (0.010f * sr));
+        const float rc = 1.0f / (2.0f * 3.14159265f * 1800.0f);  // fc ~1.8 kHz
+        hpA = rc / (rc + 1.0f / sr);
         refractorySamples = static_cast<int>(0.025f * sr);  // 25 ms
         reset();
     }
@@ -41,12 +54,16 @@ struct OnsetDetector {
     }
     void reset() {
         fast = pre = 0;
+        hpX = hpY = 0;
         refr = 0;
     }
 
     // Returns true exactly once per detected attack.
     bool process(float x) {
-        const float a = std::fabs(x);
+        // High-pass first: the ring is tonal (low), the attack is broadband.
+        hpY = hpA * (hpY + x - hpX);
+        hpX = x;
+        const float a = std::fabs(hpY);
         fast = a > fast ? a : fast * relCoef;
         pre += preK * (fast - pre);
         if (refr > 0) {

@@ -39,6 +39,27 @@ void addPluck(std::vector<float>& buf, size_t at, float amp, float freq = 330.0f
     }
 }
 
+// A ringing (open-string) pluck: a brief broadband attack transient (the pick
+// scrape) followed by a long tonal ring (~500 ms) that overlaps the next
+// notes. This is the case the field exposed: palm mutes (short tails, big
+// level rises) detected fine while ringing notes buried each other — the
+// sustain holds the lagging envelope up, so a new attack never clears the
+// rise ratio without spectral separation.
+void addRingingPluck(std::vector<float>& buf, size_t at, float amp, float freq = 330.0f) {
+    std::mt19937 gen(static_cast<unsigned>(at));
+    std::uniform_real_distribution<float> noise(-1.0f, 1.0f);
+    const size_t burst = static_cast<size_t>(0.004f * kSr);     // 4 ms scrape
+    const float decay = std::exp(-1.0f / (0.500f * kSr));        // ~500 ms ring
+    float env = amp;
+    for (size_t i = at; i < buf.size() && env > 1e-4f; ++i) {
+        const float t = static_cast<float>(i - at) / kSr;
+        const float scrape = (i - at) < burst ? 0.6f * noise(gen) : 0.0f;
+        buf[i] += env * (0.9f * std::sin(2.0f * 3.14159265f * freq * t) +
+                         0.03f * noise(gen) + scrape);
+        env *= decay;
+    }
+}
+
 // Run the detector over a buffer, returning onset timestamps (sample index).
 std::vector<uint64_t> detect(const std::vector<float>& buf, float sens = 0.5f) {
     webamp::OnsetDetector det;
@@ -127,6 +148,30 @@ int main() {
             addPluck(buf, static_cast<size_t>(1000 + n * ioi), n % 4 == 0 ? 0.6f : 0.3f);
         const auto ts = detect(buf);
         check("accented 16ths: all 16 onsets", ts.size() == 16, "got " + std::to_string(ts.size()));
+    }
+
+    // 8b. Ringing open-string notes (the field report): 16ths at 160 BPM with
+    // ~500 ms ring — every note overlaps the next several. All must be found,
+    // same as palm mutes; alternating string pitches ring over each other too.
+    {
+        const double beat160 = kSr * 60.0 / 160.0;
+        const double ioi = beat160 / 4.0;  // ~94 ms — well inside the ring
+        std::vector<float> buf(static_cast<size_t>(beat160 * 6), 0.0f);
+        for (int n = 0; n < 16; ++n)
+            addRingingPluck(buf, static_cast<size_t>(1000 + n * ioi), 0.45f,
+                            n % 2 ? 247.0f : 330.0f);
+        const auto ts = detect(buf);
+        check("ringing 16ths @160: all 16 onsets", ts.size() == 16,
+              "got " + std::to_string(ts.size()));
+    }
+
+    // 8c. One ringing pluck must not retrigger during its own long sustain.
+    {
+        std::vector<float> buf(static_cast<size_t>(kSr * 2), 0.0f);
+        addRingingPluck(buf, 4800, 0.5f);
+        const auto ts = detect(buf);
+        check("ringing pluck -> 1 onset", ts.size() == 1,
+              "got " + std::to_string(ts.size()));
     }
 
     // 8. Fast extreme: 16ths at 240 BPM (IOI 62 ms) — above the refractory.

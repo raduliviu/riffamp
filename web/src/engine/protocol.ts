@@ -25,6 +25,8 @@ export type ParamId =
   | "inCh"
   | "drumOn"
   | "drumVol"
+  | "pickOn"
+  | "pickSens"
 
 export type PedalType = "comp" | "drive" | "chorus" | "delay" | "reverb"
 export type Placement = "pre" | "post"
@@ -44,6 +46,8 @@ export interface AmpParams {
   metroVol: number
   drumVol: number
   tunerOn: boolean
+  pickOn: boolean
+  pickSens: number
 }
 
 export interface PedalState {
@@ -129,6 +133,18 @@ export interface ErrorMessage {
   message: string
 }
 
+// Picking trainer (P5a), ~12 Hz while pickOn: notes-per-beat and evenness over
+// the last bar, plus recent onset/click ages (ms) for the timeline strip.
+export interface PickingMessage {
+  type: "picking"
+  n: number
+  npb: number | null
+  cv: number | null
+  beatMs: number
+  onsets: number[]
+  clicks: number[]
+}
+
 // Pairing (P4f): a non-local origin (the hosted app) gets `needPair` on connect
 // and must send { type: "pair", code } with the code the helper prints on the
 // local machine; a wrong code yields `pairFailed`. Local origins never see these.
@@ -145,6 +161,7 @@ export type ServerMessage =
   | StateMessage
   | MetersMessage
   | TunerMessage
+  | PickingMessage
   | ErrorMessage
   | NeedPairMessage
   | PairFailedMessage

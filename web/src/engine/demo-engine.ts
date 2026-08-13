@@ -9,6 +9,7 @@ import type {
   MetersMessage,
   ParamId,
   PedalType,
+  PickingMessage,
   StateMessage,
   TunerMessage,
 } from "./protocol"
@@ -40,6 +41,9 @@ export class DemoEngine implements Engine {
     return () => {}
   }
   onTuner(_cb: (t: TunerMessage) => void): Unsubscribe {
+    return () => {}
+  }
+  onPicking(_cb: (p: PickingMessage) => void): Unsubscribe {
     return () => {}
   }
 }

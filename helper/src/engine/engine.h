@@ -26,6 +26,7 @@
 #include "tuner.h"
 #include "pedals.h"
 #include "drums.h"
+#include "picking.h"
 #include "dr_wav.h"
 
 namespace webamp {
@@ -120,6 +121,21 @@ struct Engine {
     std::vector<float> tunerRing = std::vector<float>(kRingSize, 0.0f);
     std::atomic<uint32_t> tunerPos{0};
 
+    // Picking trainer (P5a): onset detector on the same clean input, plus
+    // sample-time rings of onset and metronome-click timestamps. Audio thread
+    // writes value-then-position (release); control thread drains (acquire)
+    // and turns them into notes-per-beat / evenness stats.
+    webamp::OnsetDetector pick;
+    std::atomic<bool> pickOn{false};
+    std::atomic<float> pickSens{0.5f};
+    bool pickWasOn = false;  // audio thread only: reset detector on enable
+    std::atomic<uint64_t> sampleClock{0};  // audio-stream time, frames
+    static constexpr uint32_t kEvtRing = 256;  // power of two
+    std::array<uint64_t, kEvtRing> onsetTs{};
+    std::atomic<uint32_t> onsetPos{0};
+    std::array<uint64_t, kEvtRing> clickTs{};
+    std::atomic<uint32_t> clickPos{0};
+
     webamp::ToneStack tone;
     webamp::NoiseGate gate;
     webamp::Metronome metro;
@@ -184,6 +200,7 @@ struct Engine {
         gate.configure(sr);
         metro.configure(sr);
         drums.configure(sr);
+        pick.configure(sr);
         inCh.store(opt.inCh);
         for (auto* p : pedals) p->configure(sr);
         // Default placement/order (all disabled until the user switches one on).
@@ -216,12 +233,25 @@ struct Engine {
                 ? 0.0f
                 : std::pow(10.0f, gateDb.load(std::memory_order_relaxed) / 20.0f);
 
+        // Picking trainer: detector runs on the clean input (pre-gate, pre-amp)
+        // and works while muted, like the tuner. Reset on enable.
+        const bool pOn = pickOn.load(std::memory_order_relaxed);
+        if (pOn && !pickWasOn) pick.reset();
+        pickWasOn = pOn;
+        if (pOn) pick.setSensitivity(pickSens.load(std::memory_order_relaxed));
+        const uint64_t clockBase = sampleClock.load(std::memory_order_relaxed);
+
         float pIn = 0.0f;
         const uint32_t ringBase = tunerPos.load(std::memory_order_relaxed);
         for (unsigned long f = 0; f < frames; ++f) {
             const float raw = in[f * chIn_ + inIdx] * gIn;
             pIn = std::max(pIn, std::fabs(raw));               // meter shows the real input
             tunerRing[(ringBase + f) & (kRingSize - 1)] = raw;  // tuner works even while muted
+            if (pOn && pick.process(raw)) {
+                const uint32_t p = onsetPos.load(std::memory_order_relaxed);
+                onsetTs[p & (kEvtRing - 1)] = clockBase + f;
+                onsetPos.store(p + 1, std::memory_order_release);
+            }
             bufA[f] = gate.process(muted ? 0.0f : raw, gateLin);  // amp path silent when muted
         }
         tunerPos.store(ringBase + static_cast<uint32_t>(frames), std::memory_order_release);
@@ -263,12 +293,19 @@ struct Engine {
 
         float pOut = 0.0f;
         for (unsigned long f = 0; f < frames; ++f) {
+            const long long clicksBefore = metro.clickCount;
             const float click = metro.process(mOn, mBpm, mBeats, mAccent) * mVol;
+            if (metro.clickCount != clicksBefore) {  // a click fired this sample
+                const uint32_t p = clickPos.load(std::memory_order_relaxed);
+                clickTs[p & (kEvtRing - 1)] = clockBase + f;
+                clickPos.store(p + 1, std::memory_order_release);
+            }
             const float drum = drums.process(dOn, mBpm) * dVol;
             const float v = std::clamp(bufA[f] * gOut + click + drum, -1.0f, 1.0f);
             pOut = std::max(pOut, std::fabs(v));
             for (int c = 0; c < chOut_; ++c) out[f * chOut_ + c] = v;
         }
+        sampleClock.store(clockBase + frames, std::memory_order_release);
         beatCount.store(metro.clickCount, std::memory_order_relaxed);
         beatInBar.store(metro.beat, std::memory_order_relaxed);
         float cur = peakIn.load(std::memory_order_relaxed);

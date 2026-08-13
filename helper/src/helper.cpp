@@ -30,6 +30,7 @@
 #include "audio_io.h"
 #include "control.h"
 #include "pairing.h"
+#include "picking_tracker.h"
 #include "platform.h"
 
 #include <ixwebsocket/IXHttpServer.h>
@@ -280,6 +281,8 @@ int main(int argc, char** argv) {
     // Meter + beat broadcast loop (~25 Hz) until the shell quits us.
     int tunerTick = 0;
     std::vector<float> tunerWin(4096);
+    PickingTracker picking;
+    bool pickingWasOn = false;
     while (platform::gRunning.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
 
@@ -293,8 +296,9 @@ int main(int argc, char** argv) {
         if (clients.empty()) continue;
 
         // Tuner analysis every other tick (~12 Hz) — YIN runs here, never on
-        // the audio thread.
-        if (engine.tunerOn.load(std::memory_order_relaxed) && (++tunerTick & 1) == 0) {
+        // the audio thread. (tunerTick advances once per loop, below; tuner
+        // and picking analysis run on alternating phases.)
+        if (engine.tunerOn.load(std::memory_order_relaxed) && (tunerTick & 1) == 0) {
             const uint32_t pos = engine.tunerPos.load(std::memory_order_acquire);
             for (uint32_t i = 0; i < tunerWin.size(); ++i)
                 tunerWin[i] = engine.tunerRing[(pos - tunerWin.size() + i) & (Engine::kRingSize - 1)];
@@ -309,6 +313,22 @@ int main(int argc, char** argv) {
             }
             broadcast(t.dump());
         }
+
+        // Picking trainer stats (~12 Hz, alternating with the tuner's ticks).
+        const bool pickingOn = engine.pickOn.load(std::memory_order_relaxed);
+        if (pickingOn && !pickingWasOn) picking.reset(engine);  // fresh session
+        pickingWasOn = pickingOn;
+        if (pickingOn && (tunerTick & 1) == 1) {
+            const uint64_t now = engine.sampleClock.load(std::memory_order_acquire);
+            const double sr = engine.opt.sr;
+            const int beats = engine.metroBeats.load(std::memory_order_relaxed);
+            const double bpm = engine.metroBpm.load(std::memory_order_relaxed);
+            // Keep two bars of history for the timeline strip.
+            picking.update(engine, now,
+                           static_cast<uint64_t>(sr * 60.0 / std::max(20.0, bpm) * beats * 2));
+            broadcast(picking.message(now, sr, bpm, beats).dump());
+        }
+        ++tunerTick;
         const json m = {{"type", "meters"},
                         {"in", engine.peakIn.exchange(0.0f)},
                         {"out", engine.peakOut.exchange(0.0f)},

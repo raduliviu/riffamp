@@ -207,6 +207,29 @@ check("unmute (enable input)", state["params"]["mute"] is False)
 state = rpc({"type": "setParam", "id": "mute", "value": 1}, "state")  # restore muted default
 check("re-mute", state["params"]["mute"] is True)
 
+# 6b. picking trainer (P5a): params round-trip and the stats stream flows.
+state = rpc({"type": "setParam", "id": "pickOn", "value": 1}, "state")
+check("pickOn set", state["params"]["pickOn"] is True)
+state = rpc({"type": "setParam", "id": "pickSens", "value": 0.8}, "state")
+check("pickSens set", abs(state["params"]["pickSens"] - 0.8) < 1e-6)
+got_picking = None
+deadline = time.time() + 2.0
+while time.time() < deadline:
+    m = json.loads(ws.recv())
+    if m.get("type") == "picking":
+        got_picking = m
+        break
+check("picking stream flows", got_picking is not None)
+if got_picking:
+    check("picking message shape",
+          "n" in got_picking and "onsets" in got_picking and "clicks" in got_picking
+          and "beatMs" in got_picking,
+          str({k: got_picking[k] for k in ("n", "beatMs")}))
+    check("picking: silence -> no onsets", got_picking["n"] == 0,
+          f"n={got_picking['n']}")
+state = rpc({"type": "setParam", "id": "pickOn", "value": 0}, "state")
+check("pickOn cleared", state["params"]["pickOn"] is False)
+
 ws.close()
 
 # 7. non-local origin must pair before anything (P4f). It may connect, but

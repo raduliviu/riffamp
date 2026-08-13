@@ -4,6 +4,7 @@ import { Section } from "@/components/shell/section"
 import { useEngineStore } from "@/engine/store"
 import { DrumSection } from "./practice/drum-section"
 import { MetronomeSection } from "./practice/metronome-section"
+import { PickingSection } from "./practice/picking-section"
 import { TunerSection } from "./practice/tuner-section"
 
 export function PracticeView() {
@@ -17,6 +18,9 @@ export function PracticeView() {
       </Section>
       <Section title="METRONOME">
         <MetronomeSection />
+      </Section>
+      <Section title="PICKING TRAINER">
+        <PickingSection />
       </Section>
       <Section title="DRUM MACHINE">
         <DrumSection drums={state.drums} grooves={state.grooves} />

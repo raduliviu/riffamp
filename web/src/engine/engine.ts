@@ -6,6 +6,7 @@ import type {
   MetersMessage,
   ParamId,
   PedalType,
+  PickingMessage,
   StateMessage,
   TunerMessage,
 } from "./protocol"
@@ -40,6 +41,7 @@ export interface Engine {
   // (refs / CSS vars) — these must never route through React state.
   onMeters(cb: (m: MetersMessage) => void): Unsubscribe
   onTuner(cb: (t: TunerMessage) => void): Unsubscribe
+  onPicking(cb: (p: PickingMessage) => void): Unsubscribe
 }
 
 /** Tiny typed pub-sub used by engine implementations. */

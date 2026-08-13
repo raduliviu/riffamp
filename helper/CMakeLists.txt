@@ -129,6 +129,10 @@ add_executable(pedals_test src/pedals_test.cpp)
 target_include_directories(pedals_test PRIVATE "${WEBAMP_DSP_DIR}")
 target_compile_features(pedals_test PRIVATE cxx_std_17)
 
+add_executable(picking_test src/picking_test.cpp)
+target_include_directories(picking_test PRIVATE "${WEBAMP_DSP_DIR}")
+target_compile_features(picking_test PRIVATE cxx_std_17)
+
 # The helper: portable core + one platform shell file.
 if(WIN32)
   set(WEBAMP_PLATFORM_SOURCES src/platform/platform_win.cpp resources/webamp.rc)

@@ -12,6 +12,7 @@ import type {
   MetersMessage,
   ParamId,
   PedalType,
+  PickingMessage,
   ServerMessage,
   StateMessage,
   TunerMessage,
@@ -37,6 +38,7 @@ export class HelperEngine implements Engine {
   private error$ = new Emitter<string>()
   private meters$ = new Emitter<MetersMessage>()
   private tuner$ = new Emitter<TunerMessage>()
+  private picking$ = new Emitter<PickingMessage>()
 
   private url: string
   constructor(url: string = HELPER_WS_URL) {
@@ -100,6 +102,9 @@ export class HelperEngine implements Engine {
   onTuner(cb: (t: TunerMessage) => void): Unsubscribe {
     return this.tuner$.subscribe(cb)
   }
+  onPicking(cb: (p: PickingMessage) => void): Unsubscribe {
+    return this.picking$.subscribe(cb)
+  }
 
   private connect() {
     if (this.stopped) return
@@ -132,6 +137,9 @@ export class HelperEngine implements Engine {
         break
       case "tuner":
         this.tuner$.emit(msg)
+        break
+      case "picking":
+        this.picking$.emit(msg)
         break
       case "error":
         this.error$.emit(msg.message)

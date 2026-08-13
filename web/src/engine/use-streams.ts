@@ -4,7 +4,7 @@
 // Handlers update the DOM imperatively; these streams never enter React state.
 
 import { useEffect, useEffectEvent } from "react"
-import type { MetersMessage, TunerMessage } from "./protocol"
+import type { MetersMessage, PickingMessage, TunerMessage } from "./protocol"
 import { useEngine } from "./use-engine"
 
 export function useMeters(handler: (m: MetersMessage) => void) {
@@ -19,4 +19,10 @@ export function useTuner(handler: (t: TunerMessage) => void) {
   const engine = useEngine()
   const onTuner = useEffectEvent(handler)
   useEffect(() => engine.onTuner((t) => onTuner(t)), [engine])
+}
+
+export function usePicking(handler: (p: PickingMessage) => void) {
+  const engine = useEngine()
+  const onPicking = useEffectEvent(handler)
+  useEffect(() => engine.onPicking((p) => onPicking(p)), [engine])
 }

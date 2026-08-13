@@ -230,6 +230,60 @@ if got_picking:
 state = rpc({"type": "setParam", "id": "pickOn", "value": 0}, "state")
 check("pickOn cleared", state["params"]["pickOn"] is False)
 
+# 6c. pick run (P5b): validation, one-click start (metronome + detector), a
+# real short run end-to-end (result arrives, metronome auto-stops), cancel.
+err = rpc({"type": "startPickRun", "bars": 0, "countIn": 1}, "error")
+check("run: bad bars -> error", err.get("type") == "error")
+err = rpc({"type": "startPickRun", "bars": 1, "countIn": 5}, "error")
+check("run: bad countIn -> error", err.get("type") == "error")
+
+prev_bpm = state["params"]["metroBpm"]
+prev_beats = state["params"]["metroBeats"]
+rpc({"type": "setParam", "id": "metroBpm", "value": 360}, "state")
+rpc({"type": "setParam", "id": "metroBeats", "value": 3}, "state")
+state = rpc({"type": "startPickRun", "bars": 1, "countIn": 1}, "state")
+check("run starts metronome + detector",
+      state["params"]["metroOn"] is True and state["params"]["pickOn"] is True)
+check("run active in state", state.get("pickRunActive") is True)
+# 1 count-in bar + 1 bar of 3 beats @360 bpm + boundary ≈ 1.2 s; wait for result.
+got_status = None
+got_result = None
+ws.settimeout(6)
+deadline = time.time() + 5.0
+while time.time() < deadline and not got_result:
+    m = json.loads(ws.recv())
+    if m.get("type") == "pickRun":
+        got_status = m
+    elif m.get("type") == "pickRunResult":
+        got_result = m
+check("run progress streams", got_status is not None,
+      str(got_status and got_status.get("phase")))
+check("run result arrives", got_result is not None)
+if got_result:
+    check("result grid: bars*beats+1 clicks", len(got_result["clicks"]) == 4,
+          f"n={len(got_result['clicks'])}")
+    check("result grid starts at 0 ms", abs(got_result["clicks"][0]) < 1e-6)
+    check("result: silence -> no onsets", got_result["onsets"] == [])
+    check("result echoes config",
+          got_result["bars"] == 1 and got_result["countIn"] == 1
+          and got_result["beatsPerBar"] == 3)
+state = rpc({"type": "hello"}, "state")
+check("metronome auto-stops after run", state["params"]["metroOn"] is False)
+check("run inactive after result", state.get("pickRunActive") is False)
+# cancel path: manual metronome stop also cancels (it is the run's clock)
+state = rpc({"type": "startPickRun", "bars": 16, "countIn": 2}, "state")
+check("second run starts", state.get("pickRunActive") is True)
+state = rpc({"type": "cancelPickRun"}, "state")
+check("cancel stops run + metronome",
+      state.get("pickRunActive") is False and state["params"]["metroOn"] is False)
+state = rpc({"type": "startPickRun", "bars": 16, "countIn": 2}, "state")
+state = rpc({"type": "setParam", "id": "metroOn", "value": 0}, "state")
+check("stopping metronome cancels run", state.get("pickRunActive") is False)
+# restore
+rpc({"type": "setParam", "id": "metroBpm", "value": prev_bpm}, "state")
+rpc({"type": "setParam", "id": "metroBeats", "value": prev_beats}, "state")
+rpc({"type": "setParam", "id": "pickOn", "value": 0}, "state")
+
 ws.close()
 
 # 7. non-local origin must pair before anything (P4f). It may connect, but

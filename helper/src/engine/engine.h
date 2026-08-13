@@ -27,6 +27,7 @@
 #include "pedals.h"
 #include "drums.h"
 #include "picking.h"
+#include "pick_run.h"
 #include "dr_wav.h"
 
 namespace webamp {
@@ -104,6 +105,10 @@ struct Engine {
     std::atomic<bool> mute{true};
     std::atomic<bool> toneDirty{true};
     std::atomic<bool> metroOn{false}, metroAccent{true};
+    // One-shot: audio thread consumes it and restarts the metronome phase so
+    // the next click is beat 1 — a pick run's count-in starts clean even if
+    // the metronome was already running.
+    std::atomic<bool> metroRestart{false};
     std::atomic<float> metroBpm{120.0f}, metroVol{0.5f};
     std::atomic<int> metroBeats{4};
     std::atomic<long long> beatCount{0};  // clicks fired; UI flashes on change
@@ -135,6 +140,10 @@ struct Engine {
     std::atomic<uint32_t> onsetPos{0};
     std::array<uint64_t, kEvtRing> clickTs{};
     std::atomic<uint32_t> clickPos{0};
+
+    // Pick-run recorder (P5b): control-thread only (WS handlers start/cancel,
+    // the meter loop feeds it drained click/onset timestamps and polls).
+    webamp::PickRun pickRun;
 
     webamp::ToneStack tone;
     webamp::NoiseGate gate;
@@ -288,6 +297,9 @@ struct Engine {
         const bool mAccent = metroAccent.load(std::memory_order_relaxed);
         const bool dOn = drumOn.load(std::memory_order_relaxed);
         const float dVol = drumVol.load(std::memory_order_relaxed);
+        // One-shot restart (pick-run count-in): fake an off edge so blockStart
+        // resets the phase and the very next sample fires beat 1.
+        if (metroRestart.exchange(false, std::memory_order_relaxed)) metro.wasOn = false;
         metro.blockStart(mOn);
         drums.blockStart(dOn);
 

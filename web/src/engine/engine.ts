@@ -7,9 +7,13 @@ import type {
   ParamId,
   PedalType,
   PickingMessage,
+  PickRunResultMessage,
+  PickRunStatusMessage,
   StateMessage,
   TunerMessage,
 } from "./protocol"
+
+export type PickRunMessage = PickRunStatusMessage | PickRunResultMessage
 
 export type EngineKind = "helper" | "demo"
 
@@ -42,6 +46,7 @@ export interface Engine {
   onMeters(cb: (m: MetersMessage) => void): Unsubscribe
   onTuner(cb: (t: TunerMessage) => void): Unsubscribe
   onPicking(cb: (p: PickingMessage) => void): Unsubscribe
+  onPickRun(cb: (m: PickRunMessage) => void): Unsubscribe
 }
 
 /** Tiny typed pub-sub used by engine implementations. */

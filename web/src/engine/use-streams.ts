@@ -4,6 +4,7 @@
 // Handlers update the DOM imperatively; these streams never enter React state.
 
 import { useEffect, useEffectEvent } from "react"
+import type { PickRunMessage } from "./engine"
 import type { MetersMessage, PickingMessage, TunerMessage } from "./protocol"
 import { useEngine } from "./use-engine"
 
@@ -25,4 +26,10 @@ export function usePicking(handler: (p: PickingMessage) => void) {
   const engine = useEngine()
   const onPicking = useEffectEvent(handler)
   useEffect(() => engine.onPicking((p) => onPicking(p)), [engine])
+}
+
+export function usePickRun(handler: (m: PickRunMessage) => void) {
+  const engine = useEngine()
+  const onPickRun = useEffectEvent(handler)
+  useEffect(() => engine.onPickRun((m) => onPickRun(m)), [engine])
 }

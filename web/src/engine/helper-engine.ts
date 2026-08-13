@@ -5,7 +5,12 @@
 //    rAF suspends in background/embedded tabs and silently drops changes.
 
 import { Emitter } from "./engine"
-import type { ConnectionStatus, Engine, Unsubscribe } from "./engine"
+import type {
+  ConnectionStatus,
+  Engine,
+  PickRunMessage,
+  Unsubscribe,
+} from "./engine"
 import { HELPER_WS_URL } from "./protocol"
 import type {
   ClientCommand,
@@ -39,6 +44,7 @@ export class HelperEngine implements Engine {
   private meters$ = new Emitter<MetersMessage>()
   private tuner$ = new Emitter<TunerMessage>()
   private picking$ = new Emitter<PickingMessage>()
+  private pickRun$ = new Emitter<PickRunMessage>()
 
   private url: string
   constructor(url: string = HELPER_WS_URL) {
@@ -105,6 +111,9 @@ export class HelperEngine implements Engine {
   onPicking(cb: (p: PickingMessage) => void): Unsubscribe {
     return this.picking$.subscribe(cb)
   }
+  onPickRun(cb: (m: PickRunMessage) => void): Unsubscribe {
+    return this.pickRun$.subscribe(cb)
+  }
 
   private connect() {
     if (this.stopped) return
@@ -140,6 +149,10 @@ export class HelperEngine implements Engine {
         break
       case "picking":
         this.picking$.emit(msg)
+        break
+      case "pickRun":
+      case "pickRunResult":
+        this.pickRun$.emit(msg)
         break
       case "error":
         this.error$.emit(msg.message)

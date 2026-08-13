@@ -13,9 +13,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import type { PickRunResultMessage } from "@/engine/protocol"
 import { useEngine } from "@/engine/use-engine"
 import { useEngineStore } from "@/engine/store"
-import { usePicking } from "@/engine/use-streams"
+import { usePicking, usePickRun } from "@/engine/use-streams"
+import { PickRunResults } from "./pick-run-results"
 
 const TARGETS = [
   { value: 2, label: "8ths (2/beat)" },
@@ -24,6 +26,9 @@ const TARGETS = [
   { value: 6, label: "Sextuplets (6/beat)" },
 ]
 const TARGET_KEY = "webamp:pickTarget"
+const RUN_BARS = [1, 2, 4, 8, 12, 16]
+const BARS_KEY = "webamp:pickRunBars"
+const COUNTIN_KEY = "webamp:pickRunCountIn"
 
 const npbClass = (color: string) => `text-5xl font-bold tabular-nums ${color}`
 
@@ -37,6 +42,36 @@ export function PickingSection() {
   )
   const npbRef = useRef<HTMLDivElement>(null)
   const cvRef = useRef<HTMLDivElement>(null)
+
+  // Run mode (P5b): fixed-length recorded run with count-in and a breakdown.
+  const [runBars, setRunBars] = useState(
+    () => Number(localStorage.getItem(BARS_KEY)) || 8
+  )
+  const [countIn, setCountIn] = useState(
+    () => Number(localStorage.getItem(COUNTIN_KEY)) || 1
+  )
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<PickRunResultMessage | null>(null)
+  const runStatusRef = useRef<HTMLDivElement>(null)
+
+  usePickRun((m) => {
+    if (m.type === "pickRunResult") {
+      setResult(m)
+      setRunning(false)
+      if (runStatusRef.current) runStatusRef.current.textContent = ""
+      return
+    }
+    if (!running) setRunning(true) // engine-driven (e.g. page reloaded mid-run)
+    const el = runStatusRef.current
+    if (!el) return
+    if (m.phase === "countIn") {
+      el.textContent = m.beat > 0 ? `COUNT-IN · ${m.beat}` : "COUNT-IN"
+      el.className = "text-sm font-bold tabular-nums text-amber-500"
+    } else {
+      el.textContent = `● BAR ${m.bar} / ${m.bars}`
+      el.className = "text-sm font-bold tabular-nums text-red-500"
+    }
+  })
 
   // Readout colors: green on target, amber drifting, red off (e.g. triplets
   // when 16ths were asked for). Imperative — 12 Hz stream.
@@ -77,15 +112,42 @@ export function PickingSection() {
     setTarget(v)
     localStorage.setItem(TARGET_KEY, String(v))
   }
+  const selectRunBars = (v: number) => {
+    setRunBars(v)
+    localStorage.setItem(BARS_KEY, String(v))
+  }
+  const selectCountIn = (v: number) => {
+    setCountIn(v)
+    localStorage.setItem(COUNTIN_KEY, String(v))
+  }
+  const startRun = () => {
+    setResult(null)
+    setRunning(true)
+    if (runStatusRef.current) {
+      runStatusRef.current.textContent = "COUNT-IN"
+      runStatusRef.current.className =
+        "text-sm font-bold tabular-nums text-amber-500"
+    }
+    engine.send({ type: "startPickRun", bars: runBars, countIn })
+  }
+  const cancelRun = () => {
+    engine.send({ type: "cancelPickRun" })
+    setRunning(false)
+    if (runStatusRef.current) runStatusRef.current.textContent = ""
+  }
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <Button
           variant={on ? "destructive" : "default"}
-          onClick={() =>
-            engine.send({ type: "setParam", id: "pickOn", value: on ? 0 : 1 })
-          }
+          onClick={() => {
+            const next = on ? 0 : 1
+            engine.send({ type: "setParam", id: "pickOn", value: next })
+            // The click is the trainer's reference grid — one button starts both.
+            if (next && !metroOn)
+              engine.send({ type: "setParam", id: "metroOn", value: 1 })
+          }}
         >
           {on ? "Disable" : "Enable"}
         </Button>
@@ -120,6 +182,54 @@ export function PickingSection() {
           />
         </div>
       </div>
+
+      {/* Run mode: one click starts the count-in + metronome + recording. */}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant={running ? "destructive" : "default"}
+          onClick={running ? cancelRun : startRun}
+        >
+          {running ? "■ Cancel run" : "● Record run"}
+        </Button>
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">
+          BARS
+          <Select
+            items={Object.fromEntries(RUN_BARS.map((n) => [String(n), String(n)]))}
+            value={String(runBars)}
+            onValueChange={(v) => v && selectRunBars(Number(v))}
+          >
+            <SelectTrigger size="sm" className="w-16" disabled={running}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {RUN_BARS.map((n) => (
+                <SelectItem key={n} value={String(n)}>
+                  {String(n)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">
+          COUNT-IN
+          <Select
+            items={{ "1": "1 bar", "2": "2 bars" }}
+            value={String(countIn)}
+            onValueChange={(v) => v && selectCountIn(Number(v))}
+          >
+            <SelectTrigger size="sm" className="w-20" disabled={running}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">1 bar</SelectItem>
+              <SelectItem value="2">2 bars</SelectItem>
+            </SelectContent>
+          </Select>
+        </label>
+        <div ref={runStatusRef} />
+      </div>
+
+      {result && !running && <PickRunResults result={result} target={target} />}
 
       {on && (
         <>

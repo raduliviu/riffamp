@@ -3,7 +3,12 @@
 // WASM implementation lands.
 
 import { Emitter } from "./engine"
-import type { ConnectionStatus, Engine, Unsubscribe } from "./engine"
+import type {
+  ConnectionStatus,
+  Engine,
+  PickRunMessage,
+  Unsubscribe,
+} from "./engine"
 import type {
   ClientCommand,
   MetersMessage,
@@ -44,6 +49,9 @@ export class DemoEngine implements Engine {
     return () => {}
   }
   onPicking(_cb: (p: PickingMessage) => void): Unsubscribe {
+    return () => {}
+  }
+  onPickRun(_cb: (m: PickRunMessage) => void): Unsubscribe {
     return () => {}
   }
 }

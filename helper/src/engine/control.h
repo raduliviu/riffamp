@@ -363,6 +363,7 @@ struct Control {
             {"drums", drums},
             {"presets", presetNames},
             {"grooves", grooveNames},
+            {"pickRunActive", engine.pickRun.active()},
             {"engine",
              {{"api", engine.opt.api},
               {"sampleRate", engine.opt.sr},
@@ -394,7 +395,12 @@ struct Control {
             else if (id == "mid") { engine.midDb.store(std::clamp(v, -12.0f, 12.0f)); engine.toneDirty.store(true); }
             else if (id == "treble") { engine.trebleDb.store(std::clamp(v, -12.0f, 12.0f)); engine.toneDirty.store(true); }
             else if (id == "mute") engine.mute.store(v != 0.0f);
-            else if (id == "metroOn") engine.metroOn.store(v != 0.0f);
+            else if (id == "metroOn") {
+                engine.metroOn.store(v != 0.0f);
+                // The metronome is a pick run's clock — stopping it mid-run
+                // would stall the run forever, so treat it as a cancel.
+                if (v == 0.0f && engine.pickRun.active()) engine.pickRun.cancel();
+            }
             else if (id == "metroAccent") engine.metroAccent.store(v != 0.0f);
             else if (id == "metroBpm") engine.metroBpm.store(std::clamp(v, 20.0f, 360.0f));
             else if (id == "metroBeats") engine.metroBeats.store(std::clamp(static_cast<int>(v), 1, 12));
@@ -541,6 +547,31 @@ struct Control {
                 if (it->value("name", std::string()) == name) { grooves.erase(it); break; }
             if (grooves.size() == before) return {{"type", "error"}, {"message", "unknown groove: " + name}};
             writeGrooves();
+            *changed = true;
+            return stateJson();
+        }
+        // Pick run (P5b): one command starts everything — onset detector on,
+        // metronome restarted at beat 1 (count-in), recording armed. The meter
+        // loop feeds the run and broadcasts progress + the final result.
+        if (type == "startPickRun") {
+            const int bars = msg.value("bars", 8);
+            const int countIn = msg.value("countIn", 1);
+            if (bars < 1 || bars > 16)
+                return {{"type", "error"}, {"message", "bars must be 1-16"}};
+            if (countIn < 1 || countIn > 2)
+                return {{"type", "error"}, {"message", "countIn must be 1 or 2"}};
+            engine.pickOn.store(true);
+            engine.pickRun.start(bars, countIn, engine.metroBeats.load(),
+                                 static_cast<double>(engine.opt.sr),
+                                 engine.sampleClock.load(std::memory_order_acquire));
+            engine.metroRestart.store(true);
+            engine.metroOn.store(true);
+            *changed = true;
+            return stateJson();
+        }
+        if (type == "cancelPickRun") {
+            engine.pickRun.cancel();
+            engine.metroOn.store(false);
             *changed = true;
             return stateJson();
         }

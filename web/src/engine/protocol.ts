@@ -109,6 +109,8 @@ export interface StateMessage {
   drums: DrumsState
   presets: string[]
   grooves: string[]
+  /** A pick run (P5b) is currently counting in or recording. */
+  pickRunActive: boolean
   engine: EngineInfo
 }
 
@@ -145,6 +147,29 @@ export interface PickingMessage {
   clicks: number[]
 }
 
+// Pick run (P5b), while a run is active: ~12 Hz progress during the count-in
+// and recording, then one result message. The grid is the metronome's actual
+// click times (ms relative to bar 1 beat 1); onsets may be slightly negative
+// (an anticipated first note inside the engine's half-beat margin). All
+// scoring happens client-side in lib/pick-analysis.ts.
+export interface PickRunStatusMessage {
+  type: "pickRun"
+  phase: "countIn" | "recording"
+  bar: number // 1-based within the phase
+  beat: number // 1-based; 0 while armed before the first click
+  bars: number
+  countIn: number
+}
+
+export interface PickRunResultMessage {
+  type: "pickRunResult"
+  bars: number
+  countIn: number
+  beatsPerBar: number
+  clicks: number[] // bars*beatsPerBar+1 grid beats, [0 .. end], ms
+  onsets: number[] // detected attacks, ms relative to clicks[0]
+}
+
 // Pairing (P4f): a non-local origin (the hosted app) gets `needPair` on connect
 // and must send { type: "pair", code } with the code the helper prints on the
 // local machine; a wrong code yields `pairFailed`. Local origins never see these.
@@ -162,6 +187,8 @@ export type ServerMessage =
   | MetersMessage
   | TunerMessage
   | PickingMessage
+  | PickRunStatusMessage
+  | PickRunResultMessage
   | ErrorMessage
   | NeedPairMessage
   | PairFailedMessage
@@ -185,3 +212,5 @@ export type ClientCommand =
   | { type: "saveGroove"; name: string }
   | { type: "loadGroove"; name: string }
   | { type: "deleteGroove"; name: string }
+  | { type: "startPickRun"; bars: number; countIn: number }
+  | { type: "cancelPickRun" }

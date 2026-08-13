@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "picking.h"
+#include "pick_run.h"
 
 namespace {
 
@@ -137,6 +138,76 @@ int main() {
             addPluck(buf, static_cast<size_t>(1000 + n * ioi), 0.45f);
         const auto ts = detect(buf);
         check("16ths @240: all 16 onsets", ts.size() == 16, "got " + std::to_string(ts.size()));
+    }
+
+    // --- PickRun (P5b): count-in gating, boundary end, result contents -------
+    {
+        // 120 bpm at 48k: click every 24000 samples. countIn=1, bars=2, bpb=4
+        // -> 12 run beats; the 13th click is the boundary.
+        const uint64_t step = 24000, first = 10000;
+        webamp::PickRun run;
+        run.start(2, 1, 4, kSr, 5000);
+
+        check("stale click ignored", !run.feedClick(1000) && run.active());
+
+        bool ended = false;
+        int endedAt = -1;
+        for (int k = 0; k < 13; ++k) {
+            // Onsets: perfect 16ths within each run beat (skip count-in beats
+            // 0-3); plus one count-in onset that must be excluded.
+            if (k == 1) run.feedOnset(first + step);  // during count-in
+            if (ended) break;
+            if (run.feedClick(first + k * step)) { ended = true; endedAt = k; }
+            if (k >= 4 && k < 12)
+                for (int s = 0; s < 4; ++s)
+                    run.feedOnset(first + k * step + s * step / 4);
+        }
+        check("boundary click ends run", ended && endedAt == 12,
+              "endedAt=" + std::to_string(endedAt));
+
+        const uint64_t tEnd = first + 12 * step;
+        check("poll before margin -> null", run.poll(tEnd + 1000).is_null());
+        const auto r = run.poll(tEnd + step);  // half a beat = 12000 < step
+        check("poll after margin -> result", !r.is_null() && r["type"] == "pickRunResult");
+        check("result grid: bars*bpb+1 clicks", r["clicks"].size() == 9,
+              "n=" + std::to_string(r["clicks"].size()));
+        check("result grid starts at 0 ms", std::fabs(r["clicks"][0].get<double>()) < 1e-6);
+        check("result grid spacing 500 ms",
+              std::fabs(r["clicks"][1].get<double>() - 500.0) < 1e-6);
+        check("count-in onsets excluded, run onsets kept", r["onsets"].size() == 32,
+              "n=" + std::to_string(r["onsets"].size()));
+        check("first onset at 0 ms", std::fabs(r["onsets"][0].get<double>()) < 1e-6);
+        check("run idle after result", !run.active());
+        check("second poll -> null", run.poll(tEnd + 2 * step).is_null());
+    }
+
+    // PickRun: status phases + early-margin onset + cancel.
+    {
+        const uint64_t step = 24000, first = 10000;
+        webamp::PickRun run;
+        run.start(1, 1, 4, kSr, 0);
+        auto s = run.poll(0);
+        check("armed status is countIn", s["type"] == "pickRun" && s["phase"] == "countIn");
+        run.feedClick(first);
+        run.feedClick(first + step);
+        s = run.poll(first + step);
+        check("countIn beat 2", s["phase"] == "countIn" && s["beat"] == 2, s.dump());
+        for (int k = 2; k < 8; ++k) run.feedClick(first + k * step);
+        s = run.poll(first + 7 * step);
+        check("recording bar 1 beat 4", s["phase"] == "recording" && s["beat"] == 4, s.dump());
+        // Anticipated first note: 100 ms early is inside the half-beat margin.
+        run.feedOnset(first + 4 * step - 4800);
+        const bool endedHere = run.feedClick(first + 8 * step);
+        check("1-bar run ends at 9th click", endedHere);
+        const auto r = run.poll(first + 9 * step);
+        check("early onset kept (negative ms)",
+              r["onsets"].size() == 1 && r["onsets"][0].get<double>() < 0.0,
+              r["onsets"].dump());
+
+        run.start(1, 1, 4, kSr, 0);
+        run.feedClick(first);
+        run.cancel();
+        check("cancel -> inactive, poll null", !run.active() && run.poll(first + step).is_null());
     }
 
     std::printf("\n%s\n", failures ? "FAILURES" : "ALL PASS");

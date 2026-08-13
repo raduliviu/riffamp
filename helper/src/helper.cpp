@@ -283,6 +283,10 @@ int main(int argc, char** argv) {
     std::vector<float> tunerWin(4096);
     PickingTracker picking;
     bool pickingWasOn = false;
+    // Pick-run feeder: independent ring cursors (the tracker trims its window;
+    // a run must keep every event). Start at "now" so nothing replays.
+    uint32_t runClickRd = engine.clickPos.load(std::memory_order_acquire);
+    uint32_t runOnsetRd = engine.onsetPos.load(std::memory_order_acquire);
     while (platform::gRunning.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
 
@@ -327,6 +331,25 @@ int main(int argc, char** argv) {
             picking.update(engine, now,
                            static_cast<uint64_t>(sr * 60.0 / std::max(20.0, bpm) * beats * 2));
             broadcast(picking.message(now, sr, bpm, beats).dump());
+        }
+
+        // Pick run (P5b): feed drained timestamps; the boundary click stops the
+        // metronome, poll() yields ~12 Hz progress and then the result once.
+        {
+            bool ended = false;
+            drainRing(engine.clickTs, engine.clickPos, runClickRd,
+                      [&](uint64_t ts) { ended |= engine.pickRun.feedClick(ts); });
+            drainRing(engine.onsetTs, engine.onsetPos, runOnsetRd,
+                      [&](uint64_t ts) { engine.pickRun.feedOnset(ts); });
+            if (ended) {
+                engine.metroOn.store(false);
+                broadcast(control.stateJson().dump());  // metronome button updates now
+            }
+            const json pr =
+                engine.pickRun.poll(engine.sampleClock.load(std::memory_order_acquire));
+            if (!pr.is_null() &&
+                (pr["type"] == "pickRunResult" || (tunerTick & 1) == 1))
+                broadcast(pr.dump());
         }
         ++tunerTick;
         const json m = {{"type", "meters"},

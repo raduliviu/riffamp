@@ -133,6 +133,7 @@ struct Engine {
     webamp::OnsetDetector pick;
     std::atomic<bool> pickOn{false};
     std::atomic<float> pickSens{0.5f};
+    std::atomic<int> pickTarget{4};  // notes/beat the user is practicing (drives the min-gap gate)
     bool pickWasOn = false;  // audio thread only: reset detector on enable
     std::atomic<uint64_t> sampleClock{0};  // audio-stream time, frames
     static constexpr uint32_t kEvtRing = 256;  // power of two
@@ -247,7 +248,14 @@ struct Engine {
         const bool pOn = pickOn.load(std::memory_order_relaxed);
         if (pOn && !pickWasOn) pick.reset();
         pickWasOn = pOn;
-        if (pOn) pick.setSensitivity(pickSens.load(std::memory_order_relaxed));
+        if (pOn) {
+            pick.setSensitivity(pickSens.load(std::memory_order_relaxed));
+            // Expected-rate gate: notes can't be closer than ~45% of the
+            // target subdivision at the current tempo.
+            pick.setMinGap(0.45f * 60.0f /
+                           (std::max(30.0f, metroBpm.load(std::memory_order_relaxed)) *
+                            static_cast<float>(std::max(1, pickTarget.load(std::memory_order_relaxed)))));
+        }
         const uint64_t clockBase = sampleClock.load(std::memory_order_relaxed);
 
         float pIn = 0.0f;

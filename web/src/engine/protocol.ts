@@ -27,6 +27,7 @@ export type ParamId =
   | "drumVol"
   | "pickOn"
   | "pickSens"
+  | "pickTarget"
 
 export type PedalType = "comp" | "drive" | "chorus" | "delay" | "reverb"
 export type Placement = "pre" | "post"
@@ -48,6 +49,7 @@ export interface AmpParams {
   tunerOn: boolean
   pickOn: boolean
   pickSens: number
+  pickTarget: number
 }
 
 export interface PedalState {

@@ -60,11 +60,30 @@ void addRingingPluck(std::vector<float>& buf, size_t at, float amp, float freq =
     }
 }
 
+// A messy real-world pluck (the over-triggering field report): pick scrape
+// noise ~12 ms BEFORE the attack, the attack itself, fret-buzz transients
+// after it, and a long ring. Each spurious transient is high-frequency but
+// adds almost no full-band energy on top of the ring — only the true attack
+// does both.
+void addMessyPluck(std::vector<float>& buf, size_t at, float amp, float freq = 330.0f) {
+    std::mt19937 gen(static_cast<unsigned>(at) * 7919u);
+    std::uniform_real_distribution<float> noise(-1.0f, 1.0f);
+    const size_t scrape = static_cast<size_t>(0.012f * kSr);
+    for (size_t i = at > scrape ? at - scrape : 0; i < at && i < buf.size(); ++i)
+        buf[i] += 0.10f * amp * noise(gen);  // pick scrape (HF, low level)
+    addRingingPluck(buf, at, amp, freq);     // the real note
+    for (size_t b : {static_cast<size_t>(0.018f * kSr), static_cast<size_t>(0.032f * kSr)})
+        for (size_t i = at + b; i < at + b + static_cast<size_t>(0.002f * kSr) && i < buf.size(); ++i)
+            buf[i] += 0.15f * amp * noise(gen);  // fret-buzz bursts
+}
+
 // Run the detector over a buffer, returning onset timestamps (sample index).
-std::vector<uint64_t> detect(const std::vector<float>& buf, float sens = 0.5f) {
+std::vector<uint64_t> detect(const std::vector<float>& buf, float sens = 0.5f,
+                             float minGapSec = 0.0f) {
     webamp::OnsetDetector det;
     det.configure(kSr);
     det.setSensitivity(sens);
+    if (minGapSec > 0) det.setMinGap(minGapSec);
     std::vector<uint64_t> ts;
     for (size_t i = 0; i < buf.size(); ++i)
         if (det.process(buf[i])) ts.push_back(i);
@@ -162,6 +181,35 @@ int main() {
                             n % 2 ? 247.0f : 330.0f);
         const auto ts = detect(buf);
         check("ringing 16ths @160: all 16 onsets", ts.size() == 16,
+              "got " + std::to_string(ts.size()));
+    }
+
+    // 8d. Messy real-world plucks (scrape + buzz + ring): exactly one onset per
+    // note — the spurious HF transients must not count. The expected-rate gate
+    // (~45% of a 16th at 160) mirrors what the engine sets during a run.
+    {
+        const double beat160 = kSr * 60.0 / 160.0;
+        const double ioi = beat160 / 4.0;
+        std::vector<float> buf(static_cast<size_t>(beat160 * 6), 0.0f);
+        for (int n = 0; n < 16; ++n)
+            addMessyPluck(buf, static_cast<size_t>(2000 + n * ioi), 0.45f,
+                          n % 2 ? 247.0f : 330.0f);
+        const auto ts = detect(buf, 0.5f, 0.45f * static_cast<float>(ioi / kSr));
+        check("messy 16ths @160: exactly 16 onsets", ts.size() == 16,
+              "got " + std::to_string(ts.size()));
+    }
+
+    // 8e. Scrape/buzz alone on top of a ring (no new note) -> no onset.
+    {
+        std::vector<float> buf(static_cast<size_t>(kSr * 2), 0.0f);
+        addRingingPluck(buf, 4800, 0.5f);
+        std::mt19937 gen(99);
+        std::uniform_real_distribution<float> noise(-1.0f, 1.0f);
+        const size_t at = 4800 + static_cast<size_t>(0.150f * kSr);  // mid-ring
+        for (size_t i = at; i < at + static_cast<size_t>(0.010f * kSr); ++i)
+            buf[i] += 0.06f * noise(gen);
+        const auto ts = detect(buf);
+        check("scrape on a ring -> no extra onset", ts.size() == 1,
               "got " + std::to_string(ts.size()));
     }
 

@@ -2,7 +2,7 @@
 // metronome — the readout shows measured notes-per-beat (the "am I doing
 // 16ths or triplets?" number), evenness, and the timeline strip.
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Knob } from "@/components/controls/knob"
 import { PickingTimeline } from "@/components/controls/picking-timeline"
@@ -107,6 +107,13 @@ export function PickingSection() {
             : "text-red-500")
     }
   })
+
+  // The engine needs the target too: it derives the detector's min-gap gate
+  // (no two notes closer than ~45% of a subdivision) from target × tempo.
+  const status = useEngineStore((s) => s.status)
+  useEffect(() => {
+    if (status === "connected") engine.setParam("pickTarget", target)
+  }, [status, target, engine])
 
   const selectTarget = (v: number) => {
     setTarget(v)

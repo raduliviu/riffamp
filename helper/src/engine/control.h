@@ -353,7 +353,8 @@ struct Control {
               {"drumVol", engine.drumVol.load()},
               {"tunerOn", engine.tunerOn.load()},
               {"pickOn", engine.pickOn.load()},
-              {"pickSens", engine.pickSens.load()}}},
+              {"pickSens", engine.pickSens.load()},
+              {"pickTarget", engine.pickTarget.load()}}},
             {"model", engine.modelName},
             {"ir", engine.irName},
             {"models", models},
@@ -408,6 +409,7 @@ struct Control {
             else if (id == "tunerOn") engine.tunerOn.store(v != 0.0f);
             else if (id == "pickOn") engine.pickOn.store(v != 0.0f);
             else if (id == "pickSens") engine.pickSens.store(std::clamp(v, 0.0f, 1.0f));
+            else if (id == "pickTarget") engine.pickTarget.store(std::clamp(static_cast<int>(v), 1, 8));
             else if (id == "inCh") {
                 engine.inCh.store(std::clamp(static_cast<int>(v), 1, 8));
                 if (audio) audio->persist();

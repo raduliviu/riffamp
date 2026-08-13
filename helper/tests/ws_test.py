@@ -212,6 +212,11 @@ state = rpc({"type": "setParam", "id": "pickOn", "value": 1}, "state")
 check("pickOn set", state["params"]["pickOn"] is True)
 state = rpc({"type": "setParam", "id": "pickSens", "value": 0.8}, "state")
 check("pickSens set", abs(state["params"]["pickSens"] - 0.8) < 1e-6)
+state = rpc({"type": "setParam", "id": "pickTarget", "value": 6}, "state")
+check("pickTarget set", state["params"]["pickTarget"] == 6)
+state = rpc({"type": "setParam", "id": "pickTarget", "value": 99}, "state")
+check("pickTarget clamps", state["params"]["pickTarget"] == 8)
+rpc({"type": "setParam", "id": "pickTarget", "value": 4}, "state")
 got_picking = None
 deadline = time.time() + 2.0
 while time.time() < deadline:

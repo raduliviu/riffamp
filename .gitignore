@@ -5,3 +5,4 @@ __pycache__/
 # Top-level installer output only; web/dist/index.html (the committed embedded
 # UI build) is governed by web/.gitignore.
 /dist/
+captures-*.wav

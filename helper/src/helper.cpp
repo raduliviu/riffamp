@@ -348,8 +348,13 @@ int main(int argc, char** argv) {
             const json pr =
                 engine.pickRun.poll(engine.sampleClock.load(std::memory_order_acquire));
             if (!pr.is_null() &&
-                (pr["type"] == "pickRunResult" || (tunerTick & 1) == 1))
+                (pr["type"] == "pickRunResult" || (tunerTick & 1) == 1)) {
                 broadcast(pr.dump());
+                // Run over: flush the run's capture to disk (block below).
+                if (pr["type"] == "pickRunResult" &&
+                    engine.captureState.load(std::memory_order_relaxed) == 2)
+                    engine.captureState.store(3);
+            }
         }
 
         // Debug capture finished: write the wav beside the exe (detector tuning

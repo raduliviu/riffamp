@@ -146,12 +146,13 @@ struct Engine {
     // the meter loop feeds it drained click/onset timestamps and polls).
     webamp::PickRun pickRun;
 
-    // Debug capture (detector tuning against real guitars): arm via the
-    // captureInput command; recording starts at the first sample above the arm
-    // level (so the player just starts playing whenever) and stops after
-    // kCaptureSeconds. The meter loop writes the WAV and resets to idle.
+    // Debug capture (detector tuning against real guitars). Two entry points:
+    // the captureInput command arms it (recording starts at the first sample
+    // above the arm level), and startPickRun records the whole run — grid,
+    // count-in, and exact expected note count included, so a capture doubles
+    // as labeled ground truth. The meter loop writes the WAV and resets.
     static constexpr float kCaptureArmLevel = 0.01f;  // ~-40 dBFS
-    static constexpr int kCaptureSeconds = 10;
+    static constexpr int kCaptureSeconds = 30;  // covers an 8-bar run at ~105 bpm
     std::vector<float> captureBuf;
     std::atomic<uint32_t> capturePos{0};
     std::atomic<int> captureState{0};  // 0 idle, 1 armed, 2 recording, 3 done

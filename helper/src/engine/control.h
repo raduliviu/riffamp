@@ -568,12 +568,17 @@ struct Control {
                                  engine.sampleClock.load(std::memory_order_acquire));
             engine.metroRestart.store(true);
             engine.metroOn.store(true);
+            // Record the whole run (count-in included): the capture becomes
+            // labeled ground truth — grid clicks + exact expected note count.
+            engine.capturePos.store(0);
+            engine.captureState.store(2);
             *changed = true;
             return stateJson();
         }
         if (type == "cancelPickRun") {
             engine.pickRun.cancel();
             engine.metroOn.store(false);
+            if (engine.captureState.load() == 2) engine.captureState.store(0);  // discard
             *changed = true;
             return stateJson();
         }

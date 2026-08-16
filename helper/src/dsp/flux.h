@@ -86,8 +86,13 @@ struct FluxDetector {
     // would otherwise mask normal notes for the length of the stats window.
     // binFloor — per-bin novelty floor; ignores leakage ripple and the
     // low-level spectral churn of real sustained strings.
-    float peakFrac = 0.10f;
-    float binFloor = 0.1f;
+    float peakFrac = 0.10f;  // calibrated on labeled user captures (P5c)
+    float binFloor = 0.6f;
+    // magFloor — spectral noise gate (FFT magnitude units; a full-scale sine's
+    // peak bin is ~217). Bins quieter than this can't contribute novelty: the
+    // log compression otherwise amplifies noise-floor wiggle into real flux
+    // (measured: a silent count-in at peak 7e-4 fired steady false onsets).
+    float magFloor = 0.4f;
     static constexpr float kAbsFlux = 0.5f;           // numeric-jitter floor (real onsets ~10-40)
 
     float sr = 48000;
@@ -107,7 +112,7 @@ struct FluxDetector {
     uint64_t lastOnset = 0;
     bool anyOnset = false;
 
-    float deltaK = 2.5f;                              // sens 0..1 -> 3.5 (dull) .. 1.5 (hair)
+    float deltaK = 2.0f;  // sens 0..1 -> 3.0 (dull) .. 1.0 (hair-trigger)
     uint64_t minGapSamples = 1200;                    // 25 ms @48k floor; see setMinGap
 
     void configure(float sampleRate) {
@@ -118,7 +123,7 @@ struct FluxDetector {
         reset();
     }
     void setSensitivity(float sens) {
-        deltaK = 3.5f - 2.0f * std::clamp(sens, 0.0f, 1.0f);
+        deltaK = 3.0f - 2.0f * std::clamp(sens, 0.0f, 1.0f);
     }
     void setMinGap(float seconds) {
         minGapSamples =
@@ -158,7 +163,9 @@ private:
 
         float flux = 0.0f;
         if (havePrev) {
+            const float logFloor = std::log1p(50.0f * magFloor);  // spectral noise gate
             for (int k = 0; k < kBins; ++k) {
+                if (logMag[k] < logFloor) continue;  // too quiet to be evidence
                 float p = prevLog[k];  // 3-bin max filter (SuperFlux): beats/vibrato robust
                 if (k > 0) p = std::max(p, prevLog[k - 1]);
                 if (k + 1 < kBins) p = std::max(p, prevLog[k + 1]);

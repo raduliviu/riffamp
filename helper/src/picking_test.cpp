@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "picking.h"
+#include "flux.h"
 #include "pick_run.h"
 
 #define DR_WAV_IMPLEMENTATION
@@ -64,33 +65,41 @@ void addRingingPluck(std::vector<float>& buf, size_t at, float amp, float freq =
     }
 }
 
-// A messy real-world pluck (the over-triggering field report): pick scrape
-// noise ~12 ms BEFORE the attack, the attack itself, fret-buzz transients
-// after it, and a long ring. Each spurious transient is high-frequency but
-// adds almost no full-band energy on top of the ring — only the true attack
-// does both.
+// A fret/string squeak: a quiet tonal chirp (~2.8→3.4 kHz over ~25 ms). This
+// is what real finger/fret noise looks like spectrally — narrowband and
+// gliding — unlike a white-noise burst, which is broadband novelty that any
+// spectral detector (and the ear) legitimately reads as a percussive event.
+void addSqueak(std::vector<float>& buf, size_t at, float amp) {
+    const size_t len = static_cast<size_t>(0.025f * kSr);
+    double phase = 0.0;
+    for (size_t i = at; i < at + len && i < buf.size(); ++i) {
+        const float u = static_cast<float>(i - at) / len;
+        const float freq = 2800.0f + 600.0f * u;
+        phase += 2.0 * 3.14159265 * freq / kSr;
+        const float env = std::sin(3.14159265f * u);  // smooth in/out
+        buf[i] += amp * env * static_cast<float>(std::sin(phase));
+    }
+}
+
+// A messy real-world pluck (the over-triggering field report): a squeak just
+// BEFORE the attack (finger repositioning), the attack itself, another squeak
+// after it, and a long ring.
 void addMessyPluck(std::vector<float>& buf, size_t at, float amp, float freq = 330.0f) {
-    std::mt19937 gen(static_cast<unsigned>(at) * 7919u);
-    std::uniform_real_distribution<float> noise(-1.0f, 1.0f);
-    const size_t scrape = static_cast<size_t>(0.012f * kSr);
-    for (size_t i = at > scrape ? at - scrape : 0; i < at && i < buf.size(); ++i)
-        buf[i] += 0.10f * amp * noise(gen);  // pick scrape (HF, low level)
-    addRingingPluck(buf, at, amp, freq);     // the real note
-    for (size_t b : {static_cast<size_t>(0.018f * kSr), static_cast<size_t>(0.032f * kSr)})
-        for (size_t i = at + b; i < at + b + static_cast<size_t>(0.002f * kSr) && i < buf.size(); ++i)
-            buf[i] += 0.15f * amp * noise(gen);  // fret-buzz bursts
+    const size_t pre = static_cast<size_t>(0.030f * kSr);
+    addSqueak(buf, at > pre ? at - pre : 0, 0.15f * amp);  // reposition squeak
+    addRingingPluck(buf, at, amp, freq);                   // the real note
+    addSqueak(buf, at + static_cast<size_t>(0.045f * kSr), 0.12f * amp);
 }
 
 // Run the detector over a buffer, returning onset timestamps (sample index).
 std::vector<uint64_t> detect(const std::vector<float>& buf, float sens = 0.5f,
                              float minGapSec = 0.0f) {
-    webamp::OnsetDetector det;
+    webamp::FluxDetector det;
     det.configure(kSr);
     det.setSensitivity(sens);
     if (minGapSec > 0) det.setMinGap(minGapSec);
     std::vector<uint64_t> ts;
-    for (size_t i = 0; i < buf.size(); ++i)
-        if (det.process(buf[i])) ts.push_back(i);
+    det.push(buf.data(), static_cast<int>(buf.size()), ts);
     return ts;
 }
 
@@ -99,7 +108,8 @@ std::vector<uint64_t> detect(const std::vector<float>& buf, float sens = 0.5f,
 // print every onset with levels, so constants get tuned against reality
 // instead of synthetic plucks.
 //   picking_test <wav> [sens=0.5] [minGapMs=0] [bpm target — prints npb]
-int analyzeWav(const char* path, float sens, float minGapMs, double bpm, int target) {
+int analyzeWav(const char* path, float sens, float minGapMs, double bpm, int target,
+               float binFloor, float peakFrac, bool quiet) {
     unsigned int ch = 0, sr = 0;
     drwav_uint64 frames = 0;
     float* data = drwav_open_file_and_read_pcm_frames_f32(path, &ch, &sr, &frames, nullptr);
@@ -111,34 +121,73 @@ int analyzeWav(const char* path, float sens, float minGapMs, double bpm, int tar
     for (drwav_uint64 f = 0; f < frames; ++f) mono[f] = data[f * ch];
     drwav_free(data, nullptr);
 
-    webamp::OnsetDetector det;
+    webamp::FluxDetector det;
     det.configure(static_cast<float>(sr));
     det.setSensitivity(sens);
-    if (minGapMs > 0) det.setMinGap(minGapMs / 1000.0f);
-    if (bpm > 0 && target > 0) det.setMinGap(0.45f * 60.0f / static_cast<float>(bpm * target));
+    if (binFloor > 0) det.binFloor = binFloor;
+    if (peakFrac >= 0) det.peakFrac = peakFrac;
+    if (minGapMs > 0)
+        det.setMinGap(minGapMs / 1000.0f);  // explicit gap wins over the bpm-derived default
+    else if (bpm > 0 && target > 0)
+        det.setMinGap(0.45f * 60.0f / static_cast<float>(bpm * target));
 
-    std::printf("file: %s  (%.2f s @ %u Hz)  sens=%.2f\n", path,
-                static_cast<double>(frames) / sr, sr, sens);
     std::vector<uint64_t> ts;
-    for (size_t i = 0; i < mono.size(); ++i) {
-        const bool hit = det.process(mono[i]);
-        if (hit) {
-            const double ms = 1000.0 * static_cast<double>(i) / sr;
-            const double ioi = ts.empty() ? 0.0
-                                          : 1000.0 * static_cast<double>(i - ts.back()) / sr;
-            std::printf("onset %3zu  t=%8.1f ms  ioi=%7.1f ms  hf=%.4f fb=%.4f ref=%.4f\n",
-                        ts.size() + 1, ms, ioi, det.hfFast, det.fbFast, det.attackRef);
-            ts.push_back(i);
+    det.push(mono.data(), static_cast<int>(mono.size()), ts);
+    if (!quiet) {
+        std::printf("file: %s  (%.2f s @ %u Hz)  sens=%.2f binFloor=%.2f peakFrac=%.2f\n",
+                    path, static_cast<double>(frames) / sr, sr, sens, det.binFloor,
+                    det.peakFrac);
+        for (size_t i = 0; i < ts.size(); ++i) {
+            const double ms = 1000.0 * static_cast<double>(ts[i]) / sr;
+            const double ioi =
+                i == 0 ? 0.0 : 1000.0 * static_cast<double>(ts[i] - ts[i - 1]) / sr;
+            std::printf("onset %3zu  t=%8.1f ms  ioi=%7.1f ms\n", i + 1, ms, ioi);
         }
     }
     const double beat = bpm > 0 ? sr * 60.0 / bpm : 0.0;
-    std::printf("\ntotal onsets: %zu\n", ts.size());
+    std::printf("total onsets: %zu", ts.size());
     if (ts.size() >= 4) {
-        std::printf("median IOI: %.1f ms   cv: %.3f\n",
+        std::printf("   median IOI %.1f ms   cv %.3f",
                     1000.0 * webamp::medianIoi(ts) / sr, webamp::ioiCv(ts));
         if (beat > 0)
-            std::printf("notes/beat @ %.0f bpm: %.2f\n", bpm,
-                        webamp::notesPerBeat(beat, webamp::medianIoi(ts)));
+            std::printf("   npb %.2f", webamp::notesPerBeat(beat, webamp::medianIoi(ts)));
+    }
+    std::printf("\n");
+
+    // Grid fit vs the expected subdivision (best phase; ±40 ms tolerance):
+    // distinct gridpoints hit vs ghosts (off-grid or duplicate detections).
+    if (bpm > 0 && target > 0 && !ts.empty()) {
+        const double sub = sr * 60.0 / (bpm * target);
+        int bestHits = -1;
+        int bestGhosts = 0;
+        double bestErr = 0;
+        for (double phase = 0; phase < sub; phase += sub / 64.0) {
+            std::vector<long long> pts;
+            int offGrid = 0;
+            double errSum = 0;
+            for (uint64_t t : ts) {
+                const double e = static_cast<double>(t) - phase;
+                const long long k = std::llround(e / sub);
+                const double err = e - k * sub;
+                if (std::fabs(err) <= 0.040 * sr) {
+                    pts.push_back(k);
+                    errSum += std::fabs(err);
+                } else {
+                    ++offGrid;
+                }
+            }
+            std::sort(pts.begin(), pts.end());
+            const int hits =
+                static_cast<int>(std::unique(pts.begin(), pts.end()) - pts.begin());
+            const int ghosts = offGrid + (static_cast<int>(pts.size()) - hits);
+            if (hits > bestHits) {
+                bestHits = hits;
+                bestGhosts = ghosts;
+                bestErr = pts.empty() ? 0 : errSum / static_cast<double>(pts.size());
+            }
+        }
+        std::printf("grid fit: %d gridpoints hit, %d ghosts, mean |err| %.1f ms\n",
+                    bestHits, bestGhosts, 1000.0 * bestErr / sr);
     }
     return 0;
 }
@@ -146,11 +195,33 @@ int analyzeWav(const char* path, float sens, float minGapMs, double bpm, int tar
 }  // namespace
 
 int main(int argc, char** argv) {
+    {   // FFT self-test: magnitudes must be phase-invariant for a steady sine.
+        webamp::Fft512 fft;
+        fft.init();
+        float a[512], b[512], ma[257], mb[257];
+        for (int i = 0; i < 512; ++i) {
+            a[i] = std::sin(2.0f * 3.14159265f * 220.0f * i / kSr);
+            b[i] = std::sin(2.0f * 3.14159265f * 220.0f * (i + 137) / kSr);  // shifted phase
+        }
+        fft.magnitudes(a, ma);
+        fft.magnitudes(b, mb);
+        float maxDiff = 0, maxMag = 0;
+        for (int k = 0; k < 257; ++k) {
+            maxDiff = std::max(maxDiff, std::fabs(ma[k] - mb[k]));
+            maxMag = std::max(maxMag, ma[k]);
+        }
+        std::printf("FFT self-test: peak mag %.2f, phase-shift mag diff %.4f (%s)\n",
+                    maxMag, maxDiff, maxDiff < 0.05f * maxMag ? "ok" : "BROKEN");
+    }
+    // wav mode: picking_test <wav> [sens] [minGapMs] [bpm] [target] [binFloor] [peakFrac] [quiet]
     if (argc > 1)
-        return analyzeWav(argv[1], argc > 2 ? std::atof(argv[2]) : 0.5f,
-                          argc > 3 ? std::atof(argv[3]) : 0.0f,
+        return analyzeWav(argv[1], argc > 2 ? static_cast<float>(std::atof(argv[2])) : 0.5f,
+                          argc > 3 ? static_cast<float>(std::atof(argv[3])) : 0.0f,
                           argc > 4 ? std::atof(argv[4]) : 0.0,
-                          argc > 5 ? std::atoi(argv[5]) : 4);
+                          argc > 5 ? std::atoi(argv[5]) : 4,
+                          argc > 6 ? static_cast<float>(std::atof(argv[6])) : 0.0f,
+                          argc > 7 ? static_cast<float>(std::atof(argv[7])) : -1.0f,
+                          argc > 8);
     const double bpm = 180.0;
     const double beat = kSr * 60.0 / bpm;  // 16000 samples per beat @180
 
@@ -175,6 +246,11 @@ int main(int argc, char** argv) {
             buf[i] = 0.4f * std::sin(2.0f * 3.14159265f * 220.0f * i / kSr);
         const auto ts = detect(buf);
         check("sustained tone -> <=1 onset", ts.size() <= 1, "got " + std::to_string(ts.size()));
+        if (ts.size() > 1) {  // debug: where do the ghosts land?
+            std::printf("   ghost times ms:");
+            for (auto t : ts) std::printf(" %.0f", 1000.0 * t / kSr);
+            std::printf("\n");
+        }
     }
 
     // 4. 16ths at 180 BPM (IOI 83 ms): 4 beats * 4 notes = 16 plucks, all found.
@@ -280,17 +356,13 @@ int main(int argc, char** argv) {
               "got " + std::to_string(inRun));
     }
 
-    // 8e. Scrape/buzz alone on top of a ring (no new note) -> no onset.
+    // 8e. Fret squeak alone on top of a ring (no new note) -> no onset.
     {
         std::vector<float> buf(static_cast<size_t>(kSr * 2), 0.0f);
         addRingingPluck(buf, 4800, 0.5f);
-        std::mt19937 gen(99);
-        std::uniform_real_distribution<float> noise(-1.0f, 1.0f);
-        const size_t at = 4800 + static_cast<size_t>(0.150f * kSr);  // mid-ring
-        for (size_t i = at; i < at + static_cast<size_t>(0.010f * kSr); ++i)
-            buf[i] += 0.06f * noise(gen);
+        addSqueak(buf, 4800 + static_cast<size_t>(0.150f * kSr), 0.06f);  // mid-ring
         const auto ts = detect(buf);
-        check("scrape on a ring -> no extra onset", ts.size() == 1,
+        check("squeak on a ring -> no extra onset", ts.size() == 1,
               "got " + std::to_string(ts.size()));
     }
 
@@ -304,14 +376,39 @@ int main(int argc, char** argv) {
     }
 
     // 8. Fast extreme: 16ths at 240 BPM (IOI 62 ms) — above the refractory.
+    // Four-pitch cycle: at this speed a real run crosses strings, and a
+    // same-pitch re-pick would damp the old ring at pick contact (additive
+    // synthesis can't model that, so same-pitch repicks over an undamped ring
+    // are an impossible signal, not a hard case).
     {
         const double beat240 = kSr * 60.0 / 240.0;
         const double ioi = beat240 / 4.0;
+        const float cycle[4] = {330.0f, 247.0f, 392.0f, 294.0f};
         std::vector<float> buf(static_cast<size_t>(beat240 * 5), 0.0f);
         for (int n = 0; n < 16; ++n)
-            addPluck(buf, static_cast<size_t>(1000 + n * ioi), 0.45f);
+            addPluck(buf, static_cast<size_t>(1000 + n * ioi), 0.45f, cycle[n % 4]);
         const auto ts = detect(buf);
         check("16ths @240: all 16 onsets", ts.size() == 16, "got " + std::to_string(ts.size()));
+        if (ts.size() != 16) {
+            std::printf("   expected every %.0f smp from 1000:", ioi);
+            for (auto t : ts) std::printf(" %llu", static_cast<unsigned long long>(t));
+            std::printf("\n   flux frames 5500-9000 smp:\n");
+            webamp::FluxDetector dbg;
+            dbg.configure(kSr);
+            std::vector<uint64_t> sink;
+            uint64_t lastT = ~0ull;
+            for (size_t i = 0; i < buf.size(); i += 256) {
+                dbg.push(buf.data() + i, 256, sink);
+                const int n = dbg.histN;
+                if (n > 0 && dbg.histT[n - 1] != lastT) {
+                    lastT = dbg.histT[n - 1];
+                    const uint64_t t = lastT - webamp::FluxDetector::kFft;
+                    if (t >= 5500 && t <= 9000)
+                        std::printf("     t=%5llu flux=%7.3f\n",
+                                    static_cast<unsigned long long>(t), dbg.hist[n - 1]);
+                }
+            }
+        }
     }
 
     // --- PickRun (P5b): count-in gating, boundary end, result contents -------

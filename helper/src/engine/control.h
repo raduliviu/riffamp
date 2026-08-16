@@ -577,6 +577,16 @@ struct Control {
             *changed = true;
             return stateJson();
         }
+        // Debug capture (detector tuning): arm a 10 s clean-input recording;
+        // it starts at the first audible sample and the meter loop writes
+        // webamp-capture.wav beside the exe, then broadcasts captureDone.
+        if (type == "captureInput") {
+            engine.capturePos.store(0);
+            engine.captureState.store(1);  // armed
+            return {{"type", "captureArmed"},
+                    {"seconds", Engine::kCaptureSeconds},
+                    {"startsAt", "first sample above ~-40 dBFS"}};
+        }
         if (type == "setModel" || type == "setIr") {
             const std::string name = msg.value("name", "");
             const bool isModel = (type == "setModel");

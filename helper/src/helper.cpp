@@ -351,6 +351,27 @@ int main(int argc, char** argv) {
                 (pr["type"] == "pickRunResult" || (tunerTick & 1) == 1))
                 broadcast(pr.dump());
         }
+
+        // Debug capture finished: write the wav beside the exe (detector tuning
+        // against real playing — analyze with `picking_test <wav>`).
+        if (engine.captureState.load(std::memory_order_acquire) == 3) {
+            engine.captureState.store(0);
+            const fs::path wavPath = platform::exeDir() / "webamp-capture.wav";
+            drwav_data_format fmt{};
+            fmt.container = drwav_container_riff;
+            fmt.format = DR_WAVE_FORMAT_IEEE_FLOAT;
+            fmt.channels = 1;
+            fmt.sampleRate = static_cast<drwav_uint32>(engine.opt.sr);
+            fmt.bitsPerSample = 32;
+            drwav wav;
+            if (drwav_init_file_write(&wav, wavPath.string().c_str(), &fmt, nullptr)) {
+                drwav_write_pcm_frames(&wav, engine.capturePos.load(), engine.captureBuf.data());
+                drwav_uninit(&wav);
+                std::printf("Capture written: %s\n", wavPath.string().c_str());
+                broadcast(json{{"type", "captureDone"},
+                               {"file", wavPath.string()}}.dump());
+            }
+        }
         ++tunerTick;
         const json m = {{"type", "meters"},
                         {"in", engine.peakIn.exchange(0.0f)},

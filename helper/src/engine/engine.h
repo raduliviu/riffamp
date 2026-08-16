@@ -146,6 +146,16 @@ struct Engine {
     // the meter loop feeds it drained click/onset timestamps and polls).
     webamp::PickRun pickRun;
 
+    // Debug capture (detector tuning against real guitars): arm via the
+    // captureInput command; recording starts at the first sample above the arm
+    // level (so the player just starts playing whenever) and stops after
+    // kCaptureSeconds. The meter loop writes the WAV and resets to idle.
+    static constexpr float kCaptureArmLevel = 0.01f;  // ~-40 dBFS
+    static constexpr int kCaptureSeconds = 10;
+    std::vector<float> captureBuf;
+    std::atomic<uint32_t> capturePos{0};
+    std::atomic<int> captureState{0};  // 0 idle, 1 armed, 2 recording, 3 done
+
     webamp::ToneStack tone;
     webamp::NoiseGate gate;
     webamp::Metronome metro;
@@ -211,6 +221,7 @@ struct Engine {
         metro.configure(sr);
         drums.configure(sr);
         pick.configure(sr);
+        captureBuf.resize(static_cast<size_t>(opt.sr) * kCaptureSeconds);
         inCh.store(opt.inCh);
         for (auto* p : pedals) p->configure(sr);
         // Default placement/order (all disabled until the user switches one on).
@@ -260,6 +271,8 @@ struct Engine {
 
         float pIn = 0.0f;
         const uint32_t ringBase = tunerPos.load(std::memory_order_relaxed);
+        int capSt = captureState.load(std::memory_order_relaxed);
+        uint32_t capPos = capturePos.load(std::memory_order_relaxed);
         for (unsigned long f = 0; f < frames; ++f) {
             const float raw = in[f * chIn_ + inIdx] * gIn;
             pIn = std::max(pIn, std::fabs(raw));               // meter shows the real input
@@ -269,7 +282,16 @@ struct Engine {
                 onsetTs[p & (kEvtRing - 1)] = clockBase + f;
                 onsetPos.store(p + 1, std::memory_order_release);
             }
+            if (capSt == 1 && std::fabs(raw) > kCaptureArmLevel) capSt = 2;  // player started
+            if (capSt == 2) {
+                captureBuf[capPos++] = raw;
+                if (capPos >= captureBuf.size()) capSt = 3;  // full: meter loop writes the wav
+            }
             bufA[f] = gate.process(muted ? 0.0f : raw, gateLin);  // amp path silent when muted
+        }
+        if (capSt != 0) {
+            capturePos.store(capPos, std::memory_order_relaxed);
+            captureState.store(capSt, std::memory_order_release);
         }
         tunerPos.store(ringBase + static_cast<uint32_t>(frames), std::memory_order_release);
 

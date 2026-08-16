@@ -131,7 +131,8 @@ target_compile_features(pedals_test PRIVATE cxx_std_17)
 
 add_executable(picking_test src/picking_test.cpp)
 target_include_directories(picking_test PRIVATE "${WEBAMP_DSP_DIR}" src/engine
-  "${namcore_SOURCE_DIR}/Dependencies/nlohmann")  # pick_run.h uses json.hpp
+  "${namcore_SOURCE_DIR}/Dependencies/nlohmann"  # pick_run.h uses json.hpp
+  "${drlibs_SOURCE_DIR}")                        # wav-analysis mode
 target_compile_features(picking_test PRIVATE cxx_std_17)
 
 # The helper: portable core + one platform shell file.

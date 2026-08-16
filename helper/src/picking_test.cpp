@@ -7,12 +7,16 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <random>
 #include <string>
 #include <vector>
 
 #include "picking.h"
 #include "pick_run.h"
+
+#define DR_WAV_IMPLEMENTATION
+#include "dr_wav.h"
 
 namespace {
 
@@ -90,9 +94,63 @@ std::vector<uint64_t> detect(const std::vector<float>& buf, float sens = 0.5f,
     return ts;
 }
 
+// Offline analysis of a real capture (webamp-capture.wav from the helper's
+// captureInput command): run the actual detector over actual playing and
+// print every onset with levels, so constants get tuned against reality
+// instead of synthetic plucks.
+//   picking_test <wav> [sens=0.5] [minGapMs=0] [bpm target — prints npb]
+int analyzeWav(const char* path, float sens, float minGapMs, double bpm, int target) {
+    unsigned int ch = 0, sr = 0;
+    drwav_uint64 frames = 0;
+    float* data = drwav_open_file_and_read_pcm_frames_f32(path, &ch, &sr, &frames, nullptr);
+    if (!data) {
+        std::printf("cannot read %s\n", path);
+        return 2;
+    }
+    std::vector<float> mono(frames);
+    for (drwav_uint64 f = 0; f < frames; ++f) mono[f] = data[f * ch];
+    drwav_free(data, nullptr);
+
+    webamp::OnsetDetector det;
+    det.configure(static_cast<float>(sr));
+    det.setSensitivity(sens);
+    if (minGapMs > 0) det.setMinGap(minGapMs / 1000.0f);
+    if (bpm > 0 && target > 0) det.setMinGap(0.45f * 60.0f / static_cast<float>(bpm * target));
+
+    std::printf("file: %s  (%.2f s @ %u Hz)  sens=%.2f\n", path,
+                static_cast<double>(frames) / sr, sr, sens);
+    std::vector<uint64_t> ts;
+    for (size_t i = 0; i < mono.size(); ++i) {
+        const bool hit = det.process(mono[i]);
+        if (hit) {
+            const double ms = 1000.0 * static_cast<double>(i) / sr;
+            const double ioi = ts.empty() ? 0.0
+                                          : 1000.0 * static_cast<double>(i - ts.back()) / sr;
+            std::printf("onset %3zu  t=%8.1f ms  ioi=%7.1f ms  hf=%.4f fb=%.4f ref=%.4f\n",
+                        ts.size() + 1, ms, ioi, det.hfFast, det.fbFast, det.attackRef);
+            ts.push_back(i);
+        }
+    }
+    const double beat = bpm > 0 ? sr * 60.0 / bpm : 0.0;
+    std::printf("\ntotal onsets: %zu\n", ts.size());
+    if (ts.size() >= 4) {
+        std::printf("median IOI: %.1f ms   cv: %.3f\n",
+                    1000.0 * webamp::medianIoi(ts) / sr, webamp::ioiCv(ts));
+        if (beat > 0)
+            std::printf("notes/beat @ %.0f bpm: %.2f\n", bpm,
+                        webamp::notesPerBeat(beat, webamp::medianIoi(ts)));
+    }
+    return 0;
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1)
+        return analyzeWav(argv[1], argc > 2 ? std::atof(argv[2]) : 0.5f,
+                          argc > 3 ? std::atof(argv[3]) : 0.0f,
+                          argc > 4 ? std::atof(argv[4]) : 0.0,
+                          argc > 5 ? std::atoi(argv[5]) : 4);
     const double bpm = 180.0;
     const double beat = kSr * 60.0 / bpm;  // 16000 samples per beat @180
 

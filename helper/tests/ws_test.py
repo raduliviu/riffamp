@@ -17,12 +17,16 @@ ws = websocket.create_connection("ws://127.0.0.1:43717", timeout=10,
                                  origin="http://localhost:8090")
 
 
+# Server-initiated broadcasts that interleave with command replies.
+BROADCASTS = {"meters", "tuner", "picking", "pickRun", "pickRunResult", "captureDone"}
+
+
 def rpc(msg, expect_type):
     ws.send(json.dumps(msg))
     while True:
         reply = json.loads(ws.recv())
-        if reply.get("type") == "meters" and expect_type != "meters":
-            continue  # meters interleave with replies
+        if reply.get("type") in BROADCASTS and reply.get("type") != expect_type:
+            continue
         return reply
 
 

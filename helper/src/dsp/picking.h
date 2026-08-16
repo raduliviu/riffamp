@@ -1,35 +1,12 @@
-// Picking trainer DSP (P5a): onset detection on the clean pre-amp input, plus
-// the small stats helpers the control thread uses to turn onset timestamps
-// into "notes per beat" and evenness.
+// Picking trainer stats: the small helpers that turn onset timestamps into
+// "notes per beat" and evenness.
 //
-// Detector: rise detection — an instant-attack peak follower (fast) against a
-// lagging copy of itself (pre, ~10 ms smoothing). A pick attack makes `fast`
-// jump while `pre` is still low; during sustain/decay `pre` sits at or above
-// `fast`, so ringing never retriggers regardless of absolute level (accents
-// followed by soft notes both count). A short refractory window guards the
-// attack transient itself. Runs on the audio thread: O(1)/sample, no alloc.
-//
-// Two field reports shaped this into a dual-band detector:
-//  1. "Palm mutes detect better than open notes" — rise detection alone favors
-//     percussive notes; a ringing string holds the lagging envelope up so the
-//     next attack never clears the ratio. Fix: detect attacks in a ~1.8 kHz
-//     high-passed band — the ring is fundamental + low harmonics (guitar
-//     fundamentals top out ~1.3 kHz) and vanishes above the filter, while the
-//     broadband pick transient punches through. (Also immune to mains hum.)
-//  2. "Now it picks up way too many notes" — pick scrape, fret buzz, and
-//     string noise live in that same high band. Two vetoes (the rhythm-game
-//     trick: use your priors): (a) a WEAK HF transient also requires the
-//     full-band envelope to rise — a real pluck adds energy to the whole
-//     signal, a scrape on top of a ringing note barely moves it; (b) the
-//     refractory stretches to ~45% of the expected subdivision (setMinGap,
-//     driven by the trainer's target × tempo) — two real notes can't be closer.
-//  3. "Still misses ringing notes" — the full-band rise veto is itself a rise
-//     detector, so a loud ring bed (several strings sustaining) re-created the
-//     palm-mute bias for real notes. Fix: the veto only applies to weak
-//     transients. A decaying reference (attackRef, ~2.5 s) tracks the recent
-//     loudest HF attack; anything above ~1/3 of it is unmistakably a pick
-//     attack (scrape/buzz sit at 15–25%) and bypasses the full-band gate, no
-//     matter how loud the bed is.
+// Onset DETECTION lives in dsp/flux.h (spectral flux, control thread). The
+// original level-based OnsetDetector that lived here was removed after four
+// field-calibration rounds proved level gating information-starved on a real
+// guitar: soft up-picks measure the same amplitude as pick scrape, and real
+// polyphonic ring beats through every envelope-rise gate (history in TASKS.md
+// P5a/P5c).
 
 #pragma once
 
@@ -39,79 +16,6 @@
 #include <vector>
 
 namespace webamp {
-
-struct OnsetDetector {
-    float relCoef = 0;  // fast-envelope release (~15 ms), both bands
-    float preK = 0;     // lagging-envelope smoothing (~10 ms), both bands
-    float hpA = 0;      // one-pole high-pass coefficient (~1.8 kHz)
-    float sr = 48000;
-    int refractorySamples = 0;
-
-    float hfFast = 0, hfPre = 0;  // attack band (high-passed): detects
-    float fbFast = 0, fbPre = 0;  // full band: vetoes weak scrape/buzz ghosts
-    float attackRef = 0;          // decaying reference: recent loudest HF attack
-    float refDecay = 0;
-    float hpX = 0, hpY = 0;       // high-pass state
-    int refr = 0;
-
-    // sens 0..1 (0.5 default): higher = more sensitive (lower rise ratio).
-    float ratio = 2.0f;
-    static constexpr float kMinLevel = 0.004f;    // HF transient floor
-    static constexpr float kFullSupport = 1.15f;  // weak path: full band must rise ~1.2 dB
-    static constexpr float kStrongFrac = 0.33f;   // vs attackRef: above = real attack
-
-    void configure(float sampleRate) {
-        sr = sampleRate;
-        relCoef = std::exp(-1.0f / (0.015f * sr));
-        preK = 1.0f - std::exp(-1.0f / (0.010f * sr));
-        const float rc = 1.0f / (2.0f * 3.14159265f * 1800.0f);  // fc ~1.8 kHz
-        hpA = rc / (rc + 1.0f / sr);
-        refDecay = std::exp(-1.0f / (2.5f * sr));  // attackRef half-life ~1.7 s
-        refractorySamples = static_cast<int>(0.025f * sr);  // floor; see setMinGap
-        reset();
-    }
-    void setSensitivity(float sens) {
-        ratio = 3.0f - 2.0f * std::clamp(sens, 0.0f, 1.0f);  // 3.0 (dull) .. 1.0 (hair-trigger)
-    }
-    // Expected-rate gate: no two real notes land closer than ~45% of the
-    // target subdivision (engine derives it from tempo × pickTarget), so buzz
-    // and double-triggers inside that window are structurally impossible.
-    void setMinGap(float seconds) {
-        refractorySamples = static_cast<int>(std::clamp(seconds, 0.025f, 0.090f) * sr);
-    }
-    void reset() {
-        hfFast = hfPre = fbFast = fbPre = 0;
-        attackRef = 0;
-        hpX = hpY = 0;
-        refr = 0;
-    }
-
-    // Returns true exactly once per detected attack.
-    bool process(float x) {
-        // Attack band: the ring is tonal (low), the pick transient is broadband.
-        hpY = hpA * (hpY + x - hpX);
-        hpX = x;
-        const float ah = std::fabs(hpY);
-        const float af = std::fabs(x);
-        hfFast = ah > hfFast ? ah : hfFast * relCoef;
-        hfPre += preK * (hfFast - hfPre);
-        fbFast = af > fbFast ? af : fbFast * relCoef;
-        fbPre += preK * (fbFast - fbPre);
-        // Compare against the reference from BEFORE this sample, then fold in.
-        const bool strong = hfFast > kStrongFrac * attackRef;
-        attackRef = std::max(hfFast, attackRef * refDecay);
-        if (refr > 0) {
-            --refr;
-            return false;
-        }
-        if (hfFast > kMinLevel && hfFast > hfPre * ratio &&
-            (strong || fbFast > fbPre * kFullSupport)) {
-            refr = refractorySamples;
-            return true;
-        }
-        return false;
-    }
-};
 
 // --- Stats over onset timestamps (control thread) ----------------------------
 

@@ -30,6 +30,7 @@
 #include "audio_io.h"
 #include "control.h"
 #include "pairing.h"
+#include "flux.h"
 #include "picking_tracker.h"
 #include "platform.h"
 
@@ -287,6 +288,18 @@ int main(int argc, char** argv) {
     // a run must keep every event). Start at "now" so nothing replays.
     uint32_t runClickRd = engine.clickPos.load(std::memory_order_acquire);
     uint32_t runOnsetRd = engine.onsetPos.load(std::memory_order_acquire);
+    // Flux onset detection (P5c): runs HERE, on the control thread, over the
+    // raw-input ring (tunerPos advances in lockstep with sampleClock, so ring
+    // positions map to absolute sample times). Detected onsets go into the
+    // onset ring that the tracker + run feeder drain later this same tick.
+    FluxDetector flux;
+    flux.configure(static_cast<float>(engine.opt.sr));
+    uint32_t fluxRd = engine.tunerPos.load(std::memory_order_acquire);
+    uint64_t fluxAbs = 0;   // absolute sample time of the fluxRd cursor
+    uint64_t fluxBase = 0;  // absolute time of the detector stream's start
+    bool fluxSynced = false;
+    std::vector<float> fluxBuf(8192);
+    std::vector<uint64_t> fluxOnsets;
     while (platform::gRunning.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
 
@@ -318,10 +331,63 @@ int main(int argc, char** argv) {
             broadcast(t.dump());
         }
 
-        // Picking trainer stats (~12 Hz, alternating with the tuner's ticks).
+        // Picking trainer (P5c): flux onset detection, then stats.
         const bool pickingOn = engine.pickOn.load(std::memory_order_relaxed);
-        if (pickingOn && !pickingWasOn) picking.reset(engine);  // fresh session
+        if (pickingOn && !pickingWasOn) {
+            picking.reset(engine);  // fresh session
+            flux.reset();
+            fluxRd = engine.tunerPos.load(std::memory_order_acquire);
+            fluxSynced = false;
+        }
         pickingWasOn = pickingOn;
+        if (pickingOn) {
+            flux.setSensitivity(engine.pickSens.load(std::memory_order_relaxed));
+            // Expected-rate gate: tight during a run (the grid is being graded,
+            // and between-note contact noise sits at ~2/3 subdivision), looser
+            // in free play so off-target subdivisions still register.
+            const float bpmNow = std::max(30.0f, engine.metroBpm.load(std::memory_order_relaxed));
+            const float tgt =
+                static_cast<float>(std::max(1, engine.pickTarget.load(std::memory_order_relaxed)));
+            const float frac = engine.pickRun.active() ? 0.8f : 0.45f;
+            flux.setMinGap(frac * 60.0f / (bpmNow * tgt));
+
+            // Map the ring cursor to absolute sample time once per stream. The
+            // clock/ring atomics are stored in the same callback, so the pair
+            // read here can straddle one block (~3 ms) — constant, harmless.
+            const uint32_t wr = engine.tunerPos.load(std::memory_order_acquire);
+            const uint64_t now = engine.sampleClock.load(std::memory_order_acquire);
+            if (!fluxSynced) {
+                const int32_t d = static_cast<int32_t>(static_cast<uint32_t>(now) - wr);
+                const uint64_t absWr = now - d;
+                fluxAbs = absWr - static_cast<uint32_t>(wr - fluxRd);
+                fluxBase = fluxAbs;
+                fluxSynced = true;
+            }
+            if (wr - fluxRd > Engine::kRingSize) {  // stalled a full ring: resync
+                flux.reset();
+                fluxRd = wr;
+                fluxSynced = false;
+            } else {
+                fluxOnsets.clear();
+                while (fluxRd != wr) {
+                    const uint32_t n = std::min<uint32_t>(
+                        wr - fluxRd, static_cast<uint32_t>(fluxBuf.size()));
+                    for (uint32_t i = 0; i < n; ++i)
+                        fluxBuf[i] =
+                            engine.tunerRing[(fluxRd + i) & (Engine::kRingSize - 1)];
+                    flux.push(fluxBuf.data(), static_cast<int>(n), fluxOnsets);
+                    fluxRd += n;
+                    fluxAbs += n;
+                }
+                for (const uint64_t t : fluxOnsets) {
+                    const uint32_t p = engine.onsetPos.load(std::memory_order_relaxed);
+                    engine.onsetTs[p & (Engine::kEvtRing - 1)] = fluxBase + t;
+                    engine.onsetPos.store(p + 1, std::memory_order_release);
+                }
+            }
+        }
+
+        // Picking trainer stats (~12 Hz, alternating with the tuner's ticks).
         if (pickingOn && (tunerTick & 1) == 1) {
             const uint64_t now = engine.sampleClock.load(std::memory_order_acquire);
             const double sr = engine.opt.sr;

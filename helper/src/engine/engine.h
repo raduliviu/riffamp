@@ -26,7 +26,6 @@
 #include "tuner.h"
 #include "pedals.h"
 #include "drums.h"
-#include "picking.h"
 #include "pick_run.h"
 #include "dr_wav.h"
 
@@ -126,15 +125,15 @@ struct Engine {
     std::vector<float> tunerRing = std::vector<float>(kRingSize, 0.0f);
     std::atomic<uint32_t> tunerPos{0};
 
-    // Picking trainer (P5a): onset detector on the same clean input, plus
-    // sample-time rings of onset and metronome-click timestamps. Audio thread
-    // writes value-then-position (release); control thread drains (acquire)
-    // and turns them into notes-per-beat / evenness stats.
-    webamp::OnsetDetector pick;
+    // Picking trainer (P5c): onset DETECTION happens on the control thread
+    // (spectral flux over the raw-input ring — see dsp/flux.h and the meter
+    // loop); the audio thread only stamps metronome-click timestamps. The
+    // onset ring is written by the meter loop and drained by the tracker and
+    // pick-run feeder in that same loop. pickOn/pickSens/pickTarget are set by
+    // WS handlers and consumed by the meter loop.
     std::atomic<bool> pickOn{false};
     std::atomic<float> pickSens{0.5f};
     std::atomic<int> pickTarget{4};  // notes/beat the user is practicing (drives the min-gap gate)
-    bool pickWasOn = false;  // audio thread only: reset detector on enable
     std::atomic<uint64_t> sampleClock{0};  // audio-stream time, frames
     static constexpr uint32_t kEvtRing = 256;  // power of two
     std::array<uint64_t, kEvtRing> onsetTs{};
@@ -221,7 +220,6 @@ struct Engine {
         gate.configure(sr);
         metro.configure(sr);
         drums.configure(sr);
-        pick.configure(sr);
         captureBuf.resize(static_cast<size_t>(opt.sr) * kCaptureSeconds);
         inCh.store(opt.inCh);
         for (auto* p : pedals) p->configure(sr);
@@ -255,19 +253,6 @@ struct Engine {
                 ? 0.0f
                 : std::pow(10.0f, gateDb.load(std::memory_order_relaxed) / 20.0f);
 
-        // Picking trainer: detector runs on the clean input (pre-gate, pre-amp)
-        // and works while muted, like the tuner. Reset on enable.
-        const bool pOn = pickOn.load(std::memory_order_relaxed);
-        if (pOn && !pickWasOn) pick.reset();
-        pickWasOn = pOn;
-        if (pOn) {
-            pick.setSensitivity(pickSens.load(std::memory_order_relaxed));
-            // Expected-rate gate: notes can't be closer than ~45% of the
-            // target subdivision at the current tempo.
-            pick.setMinGap(0.45f * 60.0f /
-                           (std::max(30.0f, metroBpm.load(std::memory_order_relaxed)) *
-                            static_cast<float>(std::max(1, pickTarget.load(std::memory_order_relaxed)))));
-        }
         const uint64_t clockBase = sampleClock.load(std::memory_order_relaxed);
 
         float pIn = 0.0f;
@@ -277,12 +262,9 @@ struct Engine {
         for (unsigned long f = 0; f < frames; ++f) {
             const float raw = in[f * chIn_ + inIdx] * gIn;
             pIn = std::max(pIn, std::fabs(raw));               // meter shows the real input
-            tunerRing[(ringBase + f) & (kRingSize - 1)] = raw;  // tuner works even while muted
-            if (pOn && pick.process(raw)) {
-                const uint32_t p = onsetPos.load(std::memory_order_relaxed);
-                onsetTs[p & (kEvtRing - 1)] = clockBase + f;
-                onsetPos.store(p + 1, std::memory_order_release);
-            }
+            // Raw ring feeds the tuner AND the flux onset detector (control
+            // thread) — both work even while muted.
+            tunerRing[(ringBase + f) & (kRingSize - 1)] = raw;
             if (capSt == 1 && std::fabs(raw) > kCaptureArmLevel) capSt = 2;  // player started
             if (capSt == 2) {
                 captureBuf[capPos++] = raw;

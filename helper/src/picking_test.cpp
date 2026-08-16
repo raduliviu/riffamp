@@ -199,6 +199,29 @@ int main() {
               "got " + std::to_string(ts.size()));
     }
 
+    // 8f. Notes over a chord bed (field report 3): several strings already
+    // ringing loudly under the run — the bed holds the full-band envelope up,
+    // so a rise gate on the full band silently vetoes real notes (the
+    // palm-mute bias reborn). Every note on top must still count.
+    {
+        const double beat160 = kSr * 60.0 / 160.0;
+        const double ioi = beat160 / 4.0;
+        std::vector<float> buf(static_cast<size_t>(beat160 * 6), 0.0f);
+        addRingingPluck(buf, 100, 0.40f, 196.0f);  // the bed: three low strings
+        addRingingPluck(buf, 300, 0.40f, 147.0f);
+        addRingingPluck(buf, 500, 0.40f, 110.0f);
+        const size_t runStart = static_cast<size_t>(0.1 * kSr);
+        for (int n = 0; n < 16; ++n)
+            addRingingPluck(buf, runStart + static_cast<size_t>(n * ioi), 0.35f,
+                            n % 2 ? 247.0f : 330.0f);
+        const auto all = detect(buf, 0.5f, 0.45f * static_cast<float>(ioi / kSr));
+        int inRun = 0;
+        for (uint64_t t : all)
+            if (t >= runStart - 200) ++inRun;
+        check("chord bed: all 16 notes on top detected", inRun == 16,
+              "got " + std::to_string(inRun));
+    }
+
     // 8e. Scrape/buzz alone on top of a ring (no new note) -> no onset.
     {
         std::vector<float> buf(static_cast<size_t>(kSr * 2), 0.0f);

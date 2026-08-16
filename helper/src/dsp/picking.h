@@ -18,11 +18,18 @@
 //     broadband pick transient punches through. (Also immune to mains hum.)
 //  2. "Now it picks up way too many notes" — pick scrape, fret buzz, and
 //     string noise live in that same high band. Two vetoes (the rhythm-game
-//     trick: use your priors): (a) a trigger also requires the FULL-band
-//     envelope to rise — a real pluck adds energy to the whole signal, a
-//     scrape on top of a ringing note barely moves it; (b) the refractory
-//     window stretches to ~45% of the expected subdivision (setMinGap, driven
-//     by the trainer's target × tempo) — two real notes can't be closer.
+//     trick: use your priors): (a) a WEAK HF transient also requires the
+//     full-band envelope to rise — a real pluck adds energy to the whole
+//     signal, a scrape on top of a ringing note barely moves it; (b) the
+//     refractory stretches to ~45% of the expected subdivision (setMinGap,
+//     driven by the trainer's target × tempo) — two real notes can't be closer.
+//  3. "Still misses ringing notes" — the full-band rise veto is itself a rise
+//     detector, so a loud ring bed (several strings sustaining) re-created the
+//     palm-mute bias for real notes. Fix: the veto only applies to weak
+//     transients. A decaying reference (attackRef, ~2.5 s) tracks the recent
+//     loudest HF attack; anything above ~1/3 of it is unmistakably a pick
+//     attack (scrape/buzz sit at 15–25%) and bypasses the full-band gate, no
+//     matter how loud the bed is.
 
 #pragma once
 
@@ -41,14 +48,17 @@ struct OnsetDetector {
     int refractorySamples = 0;
 
     float hfFast = 0, hfPre = 0;  // attack band (high-passed): detects
-    float fbFast = 0, fbPre = 0;  // full band: vetoes scrape/buzz ghosts
+    float fbFast = 0, fbPre = 0;  // full band: vetoes weak scrape/buzz ghosts
+    float attackRef = 0;          // decaying reference: recent loudest HF attack
+    float refDecay = 0;
     float hpX = 0, hpY = 0;       // high-pass state
     int refr = 0;
 
     // sens 0..1 (0.5 default): higher = more sensitive (lower rise ratio).
     float ratio = 2.0f;
     static constexpr float kMinLevel = 0.004f;    // HF transient floor
-    static constexpr float kFullSupport = 1.15f;  // full band must rise ~1.2 dB too
+    static constexpr float kFullSupport = 1.15f;  // weak path: full band must rise ~1.2 dB
+    static constexpr float kStrongFrac = 0.33f;   // vs attackRef: above = real attack
 
     void configure(float sampleRate) {
         sr = sampleRate;
@@ -56,6 +66,7 @@ struct OnsetDetector {
         preK = 1.0f - std::exp(-1.0f / (0.010f * sr));
         const float rc = 1.0f / (2.0f * 3.14159265f * 1800.0f);  // fc ~1.8 kHz
         hpA = rc / (rc + 1.0f / sr);
+        refDecay = std::exp(-1.0f / (2.5f * sr));  // attackRef half-life ~1.7 s
         refractorySamples = static_cast<int>(0.025f * sr);  // floor; see setMinGap
         reset();
     }
@@ -70,6 +81,7 @@ struct OnsetDetector {
     }
     void reset() {
         hfFast = hfPre = fbFast = fbPre = 0;
+        attackRef = 0;
         hpX = hpY = 0;
         refr = 0;
     }
@@ -85,11 +97,15 @@ struct OnsetDetector {
         hfPre += preK * (hfFast - hfPre);
         fbFast = af > fbFast ? af : fbFast * relCoef;
         fbPre += preK * (fbFast - fbPre);
+        // Compare against the reference from BEFORE this sample, then fold in.
+        const bool strong = hfFast > kStrongFrac * attackRef;
+        attackRef = std::max(hfFast, attackRef * refDecay);
         if (refr > 0) {
             --refr;
             return false;
         }
-        if (hfFast > kMinLevel && hfFast > hfPre * ratio && fbFast > fbPre * kFullSupport) {
+        if (hfFast > kMinLevel && hfFast > hfPre * ratio &&
+            (strong || fbFast > fbPre * kFullSupport)) {
             refr = refractorySamples;
             return true;
         }

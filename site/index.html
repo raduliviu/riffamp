@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>webamp — your guitar amp, in the browser, at real low latency</title>
+    <meta
+      name="description"
+      content="webamp is a guitar amp you control from your browser, powered by a tiny native engine that delivers real sub-10ms latency. Neural amp captures, cab IRs, a pedalboard, tuner, metronome, drum machine, and a picking trainer."
+    />
+    <link rel="canonical" href="https://webamp.app/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="webamp — your guitar amp, in the browser" />
+    <meta
+      property="og:description"
+      content="Browser UI, native low-latency engine. Neural amp tone, pedals, and practice tools that beat every browser amp on latency."
+    />
+    <meta name="theme-color" content="#0a0a0b" />
+    <style>
+      :root {
+        --bg: #0a0a0b;
+        --panel: #141417;
+        --border: #26262b;
+        --fg: #f4f4f5;
+        --muted: #a1a1aa;
+        --primary: #6366f1;
+        --amber: #f5a623;
+        --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html { scroll-behavior: smooth; }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--sans);
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+      a { color: inherit; }
+      .wrap { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+      header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 1.25rem 0;
+      }
+      .brand { font-weight: 800; letter-spacing: 0.15em; font-size: 1.1rem; }
+      .brand span { color: var(--primary); }
+      nav a { color: var(--muted); text-decoration: none; font-size: 0.9rem; margin-left: 1.5rem; }
+      nav a:hover { color: var(--fg); }
+
+      .hero { padding: 5rem 0 4rem; text-align: center; }
+      .hero h1 { font-size: clamp(2rem, 6vw, 3.5rem); line-height: 1.1; letter-spacing: -0.02em; }
+      .hero h1 .accent { color: var(--primary); }
+      .hero p.lede { color: var(--muted); font-size: 1.2rem; max-width: 40rem; margin: 1.5rem auto 0; }
+      .cta { margin-top: 2.5rem; display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+      .btn {
+        display: inline-block; padding: 0.8rem 1.6rem; border-radius: 0.6rem;
+        font-weight: 600; text-decoration: none; font-size: 0.95rem;
+      }
+      .btn-primary { background: var(--primary); color: #fff; }
+      .btn-primary:hover { filter: brightness(1.1); }
+      .btn-ghost { border: 1px solid var(--border); color: var(--fg); }
+      .btn-ghost:hover { border-color: var(--muted); }
+      .platforms { margin-top: 1rem; color: var(--muted); font-size: 0.85rem; font-family: var(--mono); }
+
+      .latency {
+        margin: 1.5rem auto 0; display: inline-flex; gap: 2.5rem; flex-wrap: wrap;
+        justify-content: center; padding: 1.25rem 2rem; background: var(--panel);
+        border: 1px solid var(--border); border-radius: 0.75rem;
+      }
+      .latency .stat { text-align: center; }
+      .latency .num { font-size: 1.8rem; font-weight: 800; font-family: var(--mono); }
+      .latency .num.good { color: var(--primary); }
+      .latency .num.bad { color: var(--muted); }
+      .latency .lbl { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+
+      section.block { padding: 3.5rem 0; border-top: 1px solid var(--border); }
+      section.block h2 { font-size: 1.6rem; letter-spacing: -0.01em; }
+      section.block > .wrap > p { color: var(--muted); margin-top: 0.75rem; max-width: 42rem; }
+
+      .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.25rem; margin-top: 2rem; }
+      .step { background: var(--panel); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.5rem; }
+      .step .n { font-family: var(--mono); color: var(--primary); font-size: 0.85rem; font-weight: 700; }
+      .step h3 { margin: 0.5rem 0; font-size: 1.05rem; }
+      .step p { color: var(--muted); font-size: 0.9rem; }
+
+      .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; margin-top: 2rem; }
+      .feature { padding: 1.1rem 1.25rem; background: var(--panel); border: 1px solid var(--border); border-radius: 0.6rem; }
+      .feature h3 { font-size: 1rem; margin-bottom: 0.3rem; }
+      .feature p { color: var(--muted); font-size: 0.88rem; }
+
+      footer { border-top: 1px solid var(--border); padding: 2.5rem 0; color: var(--muted); font-size: 0.85rem; text-align: center; }
+      footer a { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="brand">WEB<span>AMP</span></div>
+        <nav>
+          <a href="#how">How it works</a>
+          <a href="#features">Features</a>
+          <a href="#download">Download</a>
+        </nav>
+      </header>
+    </div>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <h1>Your guitar amp,<br /><span class="accent">in the browser.</span></h1>
+          <p class="lede">
+            Plug in and play through neural amp captures, cab IRs, and a full
+            pedalboard — controlled from a web page, powered by a tiny native
+            engine that delivers <strong>real sub-10&nbsp;ms latency</strong>.
+          </p>
+          <div class="latency">
+            <div class="stat">
+              <div class="num good">7.6&nbsp;ms</div>
+              <div class="lbl">webamp helper (ASIO)</div>
+            </div>
+            <div class="stat">
+              <div class="num bad">~80&nbsp;ms</div>
+              <div class="lbl">pure browser audio</div>
+            </div>
+          </div>
+          <div class="cta">
+            <a class="btn btn-primary" href="#download">Download the helper</a>
+            <a class="btn btn-ghost" href="#how">See how it works</a>
+          </div>
+          <div class="platforms">Windows (ASIO) · macOS (CoreAudio)</div>
+        </div>
+      </section>
+
+      <section class="block" id="how">
+        <div class="wrap">
+          <h2>Browser UI, native engine</h2>
+          <p>
+            The browser is a great place for an interface and a terrible place
+            for real-time audio. So webamp splits the two: the controls live on
+            a web page; a small native helper owns the audio path and talks to
+            it over a local connection.
+          </p>
+          <div class="steps">
+            <div class="step">
+              <div class="n">01</div>
+              <h3>Install the helper</h3>
+              <p>A ~2&nbsp;MB native app. It runs quietly in your tray and owns the low-latency audio path to your interface.</p>
+            </div>
+            <div class="step">
+              <div class="n">02</div>
+              <h3>Open the UI</h3>
+              <p>The helper serves its own page locally — knobs, pedalboard, tuner, and practice tools, all in your browser.</p>
+            </div>
+            <div class="step">
+              <div class="n">03</div>
+              <h3>Play</h3>
+              <p>Guitar in, amp out, at the latency a native driver gives you — not what a browser sandbox allows.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" id="features">
+        <div class="wrap">
+          <h2>Everything for a practice rig</h2>
+          <div class="features">
+            <div class="feature"><h3>Neural amp + cab</h3><p>Load NAM captures and cabinet impulse responses. Bring your own or grab thousands from the community.</p></div>
+            <div class="feature"><h3>Pedalboard</h3><p>Compressor, drive, chorus, delay, reverb — placeable before or after the amp, reorderable.</p></div>
+            <div class="feature"><h3>Tuner</h3><p>Fast, accurate pitch detection on your clean input — works even while the amp path is muted.</p></div>
+            <div class="feature"><h3>Metronome</h3><p>Sample-accurate click on the same low-latency path, with tap tempo and accents.</p></div>
+            <div class="feature"><h3>Drum machine</h3><p>A step-sequencer groove box that shares the metronome tempo. Save and switch grooves.</p></div>
+            <div class="feature"><h3>Picking trainer</h3><p>Real-time onset analysis tells you if you're actually playing 16ths — or slipping into triplets — at speed.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" id="download">
+        <div class="wrap">
+          <h2>Download</h2>
+          <p>
+            webamp is in active development. Builds for Windows and macOS are on
+            the way — this page will host them here.
+          </p>
+          <div class="cta" style="justify-content: flex-start; margin-top: 1.5rem;">
+            <a class="btn btn-primary" href="#" aria-disabled="true">Windows — coming soon</a>
+            <a class="btn btn-ghost" href="#" aria-disabled="true">macOS — coming soon</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        webamp · a browser-controlled guitar amp with a native low-latency engine
+      </div>
+    </footer>
+  </body>
+</html>

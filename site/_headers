@@ -1,0 +1,12 @@
+# Cloudflare Pages response headers.
+# Security baseline for the static landing page.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+
+# When /app (the SPA + in-browser WASM demo engine) lands here, it will likely
+# need cross-origin isolation for SharedArrayBuffer. Uncomment then:
+# /app/*
+#   Cross-Origin-Opener-Policy: same-origin
+#   Cross-Origin-Embedder-Policy: require-corp

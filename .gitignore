@@ -6,3 +6,6 @@ __pycache__/
 # UI build) is governed by web/.gitignore.
 /dist/
 captures-*.wav
+
+# Local-dev tones only — copyrighted, never commit (see helper/starter/ for the shippable pack)
+assets/

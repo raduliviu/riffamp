@@ -87,13 +87,16 @@ Run `helper/build/Release/webamp-helper.exe` (tray icon) and open
 ```bash
 cmake -S helper -B helper/build -DCMAKE_BUILD_TYPE=Release
 cmake --build helper/build --parallel
-./helper/build/webamp-helper --assets assets
+./helper/build/webamp-helper --assets helper/starter
 ```
 
 Then open <http://127.0.0.1:43718>. Ctrl+C quits.
 
 Amp models (`.nam`) and cabinet impulse responses (`.wav`) are loaded from an
 `assets/` folder next to the exe (override with `--assets <dir>`).
+`helper/starter/` is the redistributable starter pack (an MIT-licensed capture
++ CC0 IRs; see its `LICENSES.md`) — the default here so a fresh clone runs. Drop
+your own `.nam`/`.wav` files in any folder and point `--assets` at it.
 
 To build the installer, compile with Inno Setup 6:
 `ISCC.exe installer/webamp.iss` → `dist/webamp-setup-*.exe`.

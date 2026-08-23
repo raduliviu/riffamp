@@ -1,0 +1,13 @@
+{
+  // RiffAmp site — deployed to Cloudflare Workers as an assets-only site
+  // (the 2026-recommended path for static sites; no Worker script needed —
+  // Cloudflare serves the files in ./site directly).
+  //
+  // Deploy: `npx wrangler deploy` (after `npx wrangler login`), or connect
+  // this repo in the dashboard (Workers & Pages → Builds) for push-to-deploy.
+  "name": "riffamp",
+  "compatibility_date": "2026-08-23",
+  "assets": {
+    "directory": "./site"
+  }
+}

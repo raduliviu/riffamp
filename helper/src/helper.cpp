@@ -1,6 +1,6 @@
-// webamp-helper: the native audio engine, remote-controlled over ws://127.0.0.1.
+// riffamp-helper: the native audio engine, remote-controlled over ws://127.0.0.1.
 //
-//   webamp-helper --assets <dir> [--port 43717] [--api asio|wasapi|wdmks|coreaudio]
+//   riffamp-helper --assets <dir> [--port 43717] [--api asio|wasapi|wdmks|coreaudio]
 //                 [--buffer 64] [--sr 48000] [--in-ch 2]
 //
 // This file is the platform-neutral orchestrator: engine + assets + config +
@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
 
     // Load persisted settings before initBuffers so the buffer size takes effect
     // (DSP buffers are sized here). Devices are resolved later (need PortAudio).
-    const fs::path configPath = platform::exeDir() / "webamp-config.json";
+    const fs::path configPath = platform::exeDir() / "riffamp-config.json";
     const Config cfg = loadConfig(configPath);
     if (cfg.present) {
         if (cfg.buffer == 64 || cfg.buffer == 128 || cfg.buffer == 256) engine.opt.buffer = cfg.buffer;
@@ -82,11 +82,11 @@ int main(int argc, char** argv) {
     engine.initBuffers();
 
     Control control{engine};
-    control.presetsFile = platform::exeDir() / "webamp-presets.json";
+    control.presetsFile = platform::exeDir() / "riffamp-presets.json";
     control.loadPresetsFromDisk();
-    control.drumsFile = platform::exeDir() / "webamp-drums.json";
+    control.drumsFile = platform::exeDir() / "riffamp-drums.json";
     control.loadDrumsFromDisk();
-    control.groovesFile = platform::exeDir() / "webamp-grooves.json";
+    control.groovesFile = platform::exeDir() / "riffamp-grooves.json";
     control.loadGroovesFromDisk();
     control.assets.root = engine.opt.assets;
     control.assets.scan();
@@ -139,7 +139,7 @@ int main(int argc, char** argv) {
         }
         if (!audio.open(inDev, outDev, &audioErr))
             return fatal("Could not open an audio device: " + audioErr +
-                         "\n\nPlug in your interface and restart webamp.");
+                         "\n\nPlug in your interface and restart RiffAmp.");
     }
     std::printf("Audio running: %d Hz, buffer %d — %s + %s\n", engine.opt.sr, engine.opt.buffer,
                 engine.modelName.c_str(), engine.irName.c_str());
@@ -147,7 +147,7 @@ int main(int argc, char** argv) {
     // Pairing: local origins are trusted; the hosted app must pair once with a
     // code printed here. Per-connection trust is tracked by socket pointer.
     Pairing pairing;
-    pairing.init(platform::exeDir() / "webamp-paired.json");
+    pairing.init(platform::exeDir() / "riffamp-paired.json");
     constexpr int kMaxPairAttempts = 5;
     struct Conn { bool trusted = false; std::string origin; int attempts = 0; };
     std::map<ix::WebSocket*, Conn> conns;
@@ -249,7 +249,7 @@ int main(int argc, char** argv) {
         else ws.send(reply.dump());
     });
     auto res = server.listen();
-    if (!res.first) return fatal("Control port busy (is webamp already running?): " + res.second);
+    if (!res.first) return fatal("Control port busy (is RiffAmp already running?): " + res.second);
     server.start();
     std::printf("Control server: ws://127.0.0.1:%d\n", engine.opt.port);
     std::printf("Pairing code (only the hosted app needs this): %s\n", pairing.code.c_str());
@@ -427,7 +427,7 @@ int main(int argc, char** argv) {
         // against real playing — analyze with `picking_test <wav>`).
         if (engine.captureState.load(std::memory_order_acquire) == 3) {
             engine.captureState.store(0);
-            const fs::path wavPath = platform::exeDir() / "webamp-capture.wav";
+            const fs::path wavPath = platform::exeDir() / "riffamp-capture.wav";
             drwav_data_format fmt{};
             fmt.container = drwav_container_riff;
             fmt.format = DR_WAVE_FORMAT_IEEE_FLOAT;

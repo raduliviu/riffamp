@@ -11,7 +11,7 @@ import { Header } from "./header"
 import { MixerFooter } from "./mixer-footer"
 import { OfflineCard } from "./offline-card"
 
-const TAB_KEY = "webamp:tab"
+const TAB_KEY = "riffamp:tab"
 
 export function AppShell() {
   const status = useEngineStore((s) => s.status)

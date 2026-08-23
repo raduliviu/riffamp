@@ -8,7 +8,7 @@ const devMode = new URLSearchParams(window.location.search).has("dev")
 
 export default function App() {
   return (
-    <ThemeProvider defaultTheme="dark" storageKey="webamp:theme">
+    <ThemeProvider defaultTheme="dark" storageKey="riffamp:theme">
       <EngineProvider>{devMode ? <Playground /> : <AppShell />}</EngineProvider>
     </ThemeProvider>
   )

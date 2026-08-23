@@ -13,7 +13,7 @@ import { useTapTempo } from "@/lib/use-tap-tempo"
 
 const MIN_BPM = 20
 const MAX_BPM = 360
-const STEP_KEY = "webamp:metroStep"
+const STEP_KEY = "riffamp:metroStep"
 
 export function MetronomeSection() {
   const engine = useEngine()

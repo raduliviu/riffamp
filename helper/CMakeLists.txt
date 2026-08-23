@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 if(WIN32)
-  project(webamp-helper CXX RC)
+  project(riffamp-helper CXX RC)
 else()
-  project(webamp-helper CXX)
+  project(riffamp-helper CXX)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -137,21 +137,21 @@ target_compile_features(picking_test PRIVATE cxx_std_17)
 
 # The helper: portable core + one platform shell file.
 if(WIN32)
-  set(WEBAMP_PLATFORM_SOURCES src/platform/platform_win.cpp resources/webamp.rc)
+  set(WEBAMP_PLATFORM_SOURCES src/platform/platform_win.cpp resources/riffamp.rc)
 elseif(APPLE)
   set(WEBAMP_PLATFORM_SOURCES src/platform/platform_mac.cpp)
 else()
-  message(FATAL_ERROR "webamp-helper supports Windows and macOS (Linux shell not written yet)")
+  message(FATAL_ERROR "riffamp-helper supports Windows and macOS (Linux shell not written yet)")
 endif()
 
-add_executable(webamp-helper src/helper.cpp ${WEBAMP_PLATFORM_SOURCES} "${WEB_UI_HEADER}")
-target_include_directories(webamp-helper PRIVATE
+add_executable(riffamp-helper src/helper.cpp ${WEBAMP_PLATFORM_SOURCES} "${WEB_UI_HEADER}")
+target_include_directories(riffamp-helper PRIVATE
   "${drlibs_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated"
   "${WEBAMP_DSP_DIR}" src/engine src/platform)
-target_link_libraries(webamp-helper PRIVATE
+target_link_libraries(riffamp-helper PRIVATE
   portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver ixwebsocket)
 if(WIN32)
-  target_link_libraries(webamp-helper PRIVATE user32 shell32 gdi32)
+  target_link_libraries(riffamp-helper PRIVATE user32 shell32 gdi32)
   # Tray app: windows subsystem (no console) but keep main() as the entry point.
-  target_link_options(webamp-helper PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:mainCRTStartup")
+  target_link_options(riffamp-helper PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:mainCRTStartup")
 endif()

@@ -27,7 +27,7 @@ export function SettingsView() {
         <BufferPicker audio={audio} />
         {pendingParts.length > 0 && (
           <p className="mt-3 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
-            Restart webamp to apply: {pendingParts.join(", ")}.
+            Restart RiffAmp to apply: {pendingParts.join(", ")}.
           </p>
         )}
       </Section>

@@ -8,7 +8,7 @@ export function OfflineCard() {
         Engine not found
       </div>
       <p className="text-sm leading-relaxed">
-        Start the webamp helper on this machine and this page will connect
+        Start the RiffAmp helper on this machine and this page will connect
         automatically.
       </p>
     </div>

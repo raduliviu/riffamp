@@ -1,4 +1,4 @@
-# webamp
+# RiffAmp
 
 A guitar amp simulator you drive from your browser: plug your guitar into your
 audio interface, open a local page, and play — with real-time (single-digit
@@ -8,7 +8,7 @@ millisecond) latency.
 
 Browser audio capture on Windows is irreparably high-latency (~80 ms measured —
 Chrome's `getUserMedia` path is hardcoded to shared-mode WASAPI, and the
-low-latency-input tracking issue was closed Won't-Fix). So webamp is a
+low-latency-input tracking issue was closed Won't-Fix). So RiffAmp is a
 **hybrid**: the browser is only the UI, and a tiny native helper does all the
 real-time audio.
 
@@ -79,7 +79,7 @@ cmake -S helper -B helper/build
 cmake --build helper/build --config Release
 ```
 
-Run `helper/build/Release/webamp-helper.exe` (tray icon) and open
+Run `helper/build/Release/riffamp-helper.exe` (tray icon) and open
 <http://127.0.0.1:43718>.
 
 **macOS** — requires CMake and the Xcode Command Line Tools:
@@ -87,7 +87,7 @@ Run `helper/build/Release/webamp-helper.exe` (tray icon) and open
 ```bash
 cmake -S helper -B helper/build -DCMAKE_BUILD_TYPE=Release
 cmake --build helper/build --parallel
-./helper/build/webamp-helper --assets helper/starter
+./helper/build/riffamp-helper --assets helper/starter
 ```
 
 Then open <http://127.0.0.1:43718>. Ctrl+C quits.
@@ -99,7 +99,7 @@ Amp models (`.nam`) and cabinet impulse responses (`.wav`) are loaded from an
 your own `.nam`/`.wav` files in any folder and point `--assets` at it.
 
 To build the installer, compile with Inno Setup 6:
-`ISCC.exe installer/webamp.iss` → `dist/webamp-setup-*.exe`.
+`ISCC.exe installer/riffamp.iss` → `dist/riffamp-setup-*.exe`.
 
 ## License
 

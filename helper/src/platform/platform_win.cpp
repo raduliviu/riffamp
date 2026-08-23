@@ -20,7 +20,7 @@ LRESULT CALLBACK trayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (lp == WM_LBUTTONDBLCLK) ShellExecuteA(nullptr, "open", kUiUrl, nullptr, nullptr, SW_SHOWNORMAL);
         else if (lp == WM_RBUTTONUP) {
             HMENU menu = CreatePopupMenu();
-            AppendMenuA(menu, MF_STRING, kCmdOpen, "Open webamp");
+            AppendMenuA(menu, MF_STRING, kCmdOpen, "Open RiffAmp");
             AppendMenuA(menu, MF_STRING, kCmdMute, "Toggle mute");
             AppendMenuA(menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuA(menu, MF_STRING, kCmdQuit, "Quit");
@@ -103,9 +103,9 @@ void trayThread() {
     WNDCLASSA wc{};
     wc.lpfnWndProc = trayWndProc;
     wc.hInstance = GetModuleHandleA(nullptr);
-    wc.lpszClassName = "webampTray";
+    wc.lpszClassName = "riffampTray";
     RegisterClassA(&wc);
-    HWND hwnd = CreateWindowA("webampTray", "", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+    HWND hwnd = CreateWindowA("riffampTray", "", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
                               wc.hInstance, nullptr);
     NOTIFYICONDATAA nid{};
     nid.cbSize = sizeof(nid);
@@ -114,7 +114,7 @@ void trayThread() {
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = kTrayMsg;
     nid.hIcon = makeNoteIcon();
-    lstrcpynA(nid.szTip, "webamp engine — double-click to open", sizeof(nid.szTip));
+    lstrcpynA(nid.szTip, "RiffAmp engine — double-click to open", sizeof(nid.szTip));
     Shell_NotifyIconA(NIM_ADD, &nid);
 
     MSG msg;
@@ -140,20 +140,20 @@ void openUrl(const char* url) {
 }
 
 void fatalAlert(const std::string& msg) {
-    MessageBoxA(nullptr, msg.c_str(), "webamp engine", MB_ICONERROR | MB_OK);
+    MessageBoxA(nullptr, msg.c_str(), "RiffAmp engine", MB_ICONERROR | MB_OK);
 }
 
 bool initApp() {
     // Single instance: a second launch just opens the UI of the running one.
     // (Without this, Windows' SO_REUSEADDR port-sharing lets clones pile up.)
-    CreateMutexA(nullptr, TRUE, "Local\\webamp-helper-single-instance");
+    CreateMutexA(nullptr, TRUE, "Local\\riffamp-helper-single-instance");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         openUrl(kUiUrl);
         return false;
     }
 
     // No console in WIN32 subsystem: log to a file next to the exe.
-    const std::filesystem::path logPath = exeDir() / "webamp-helper.log";
+    const std::filesystem::path logPath = exeDir() / "riffamp-helper.log";
     freopen(logPath.string().c_str(), "w", stdout);
     freopen(logPath.string().c_str(), "a", stderr);
     setvbuf(stdout, nullptr, _IONBF, 0);

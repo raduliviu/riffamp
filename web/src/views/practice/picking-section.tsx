@@ -25,10 +25,10 @@ const TARGETS = [
   { value: 4, label: "16ths (4/beat)" },
   { value: 6, label: "Sextuplets (6/beat)" },
 ]
-const TARGET_KEY = "webamp:pickTarget"
+const TARGET_KEY = "riffamp:pickTarget"
 const RUN_BARS = [1, 2, 4, 8, 12, 16]
-const BARS_KEY = "webamp:pickRunBars"
-const COUNTIN_KEY = "webamp:pickRunCountIn"
+const BARS_KEY = "riffamp:pickRunBars"
+const COUNTIN_KEY = "riffamp:pickRunCountIn"
 
 const npbClass = (color: string) => `text-5xl font-bold tabular-nums ${color}`
 

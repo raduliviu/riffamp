@@ -26,8 +26,10 @@ Name: "autostart"; Description: "Start the webamp engine with &Windows"; Flags: 
 
 [Files]
 Source: "{#BuildDir}\webamp-helper.exe"; DestDir: "{app}"; Flags: ignoreversion
-; Starter tone pack (user's local assets; swap for a curated pack before public distribution)
-Source: "..\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs
+; Starter tone pack — only files webamp owns the right to redistribute
+; (helper/starter/: MIT Obsidian capture + CC0 IRs; see its LICENSES.md).
+; The repo's top-level assets/ is local-dev-only and must NOT ship.
+Source: "..\helper\starter\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{userprograms}\webamp"; Filename: "{app}\webamp-helper.exe"

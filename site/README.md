@@ -1,4 +1,4 @@
-# webamp landing site (Cloudflare Pages)
+# RiffAmp landing site (Cloudflare Pages)
 
 Static site served at the root domain. Hand-written HTML — no build step.
 
@@ -11,7 +11,7 @@ Static site served at the root domain. Hand-written HTML — no build step.
 One-time: `npx wrangler login` (opens a browser to authorize your Cloudflare account),
 then create the Pages project once — the first deploy will prompt to create it.
 
-    npx wrangler pages deploy site --project-name=webamp
+    npx wrangler pages deploy site --project-name=riffamp
 
 Redeploys: rerun the same command. Cloudflare gives a `*.pages.dev` URL;
 attach a custom domain in the Pages dashboard when ready.

@@ -10,8 +10,16 @@ works but Workers is where Cloudflare's investment goes).
 
 Config lives in `../wrangler.jsonc` (`name: riffamp`, `assets.directory: ./site`).
 
+## Deploy — the safe way: `./deploy.sh`
+
+From the repo root, run `./deploy.sh`. It builds the hosted `/app`, verifies
+`site/app/index.html` exists, and only then runs `wrangler deploy` — so a failed
+build (e.g. wrong Node version) can't publish an empty `/app`. Everything below
+is the manual equivalent.
+
 ## Deploy — option A: direct upload (fastest)
 
+    pnpm --dir web build:app    # rebuild site/app FIRST (or /app deploys empty)
     npx wrangler login          # one-time, opens a browser to authorize
     npx wrangler deploy         # run from the repo root; uploads ./site
 

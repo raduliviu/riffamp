@@ -7,14 +7,18 @@ import { useEngineStore } from "@/engine/store"
 import { PlayView } from "@/views/play-view"
 import { PracticeView } from "@/views/practice-view"
 import { SettingsView } from "@/views/settings-view"
+import { DemoFunnelBanner } from "./demo-funnel-banner"
 import { Header } from "./header"
 import { MixerFooter } from "./mixer-footer"
 import { OfflineCard } from "./offline-card"
+import { PairingCard } from "./pairing-card"
 
 const TAB_KEY = "riffamp:tab"
 
 export function AppShell() {
   const status = useEngineStore((s) => s.status)
+  const isDemo = useEngineStore((s) => s.kind === "demo")
+  const needsPairing = useEngineStore((s) => s.pairing.needed)
   const [tab, setTab] = useState(() => localStorage.getItem(TAB_KEY) ?? "play")
 
   const selectTab = (value: string) => {
@@ -24,8 +28,11 @@ export function AppShell() {
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-4xl flex-col">
+      {isDemo && <DemoFunnelBanner />}
       <Header />
-      {status !== "connected" ? (
+      {needsPairing ? (
+        <PairingCard />
+      ) : status !== "connected" ? (
         <OfflineCard />
       ) : (
         <>

@@ -3,7 +3,12 @@
 // the Engine and update the DOM imperatively.
 
 import { create } from "zustand"
-import type { ConnectionStatus, Engine, EngineKind } from "./engine"
+import type {
+  ConnectionStatus,
+  Engine,
+  EngineKind,
+  PairingState,
+} from "./engine"
 import { KNOWN_PROTOCOL_VERSION } from "./protocol"
 import type { StateMessage } from "./protocol"
 
@@ -14,6 +19,8 @@ interface EngineStore {
   lastError: string | null
   /** Helper speaks a different protocol generation than this UI knows. */
   versionMismatch: boolean
+  /** Hosted origin awaiting a pairing code (helper engine only). */
+  pairing: PairingState
   clearError: () => void
 }
 
@@ -23,6 +30,7 @@ export const useEngineStore = create<EngineStore>((set) => ({
   state: null,
   lastError: null,
   versionMismatch: false,
+  pairing: { needed: false, attemptsLeft: null },
   clearError: () => set({ lastError: null }),
 }))
 
@@ -42,6 +50,7 @@ export function bindEngineToStore(engine: Engine): () => void {
       })
     ),
     engine.onError((lastError) => useEngineStore.setState({ lastError })),
+    engine.onPairing((pairing) => useEngineStore.setState({ pairing })),
   ]
   return () => unsubs.forEach((u) => u())
 }

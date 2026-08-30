@@ -1,24 +1,15 @@
-import { useEffect, useMemo } from "react"
 import type { ReactNode } from "react"
-import type { Engine } from "./engine"
-import { HelperEngine } from "./helper-engine"
-import { bindEngineToStore } from "./store"
-import { EngineContext } from "./use-engine"
+import { HelperProvider } from "./helper-provider"
+import { DemoAwareProvider } from "./demo-aware-provider"
 
+// `__DEMO__` is a build-time constant. In the helper's single-file build it is
+// false, so this folds to `<HelperProvider>` and Rollup drops DemoAwareProvider
+// (and the WASM demo it dynamically imports) from the bundle entirely. In dev
+// and the hosted /app build it is true, enabling helper-or-demo selection.
 export function EngineProvider({ children }: { children: ReactNode }) {
-  // Helper-only for now; the demo engine joins the selection logic in P4c.
-  const engine = useMemo<Engine>(() => new HelperEngine(), [])
-
-  useEffect(() => {
-    const unbind = bindEngineToStore(engine)
-    engine.start()
-    return () => {
-      unbind()
-      engine.stop()
-    }
-  }, [engine])
-
-  return (
-    <EngineContext.Provider value={engine}>{children}</EngineContext.Provider>
+  return __DEMO__ ? (
+    <DemoAwareProvider>{children}</DemoAwareProvider>
+  ) : (
+    <HelperProvider>{children}</HelperProvider>
   )
 }

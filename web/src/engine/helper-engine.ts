@@ -8,6 +8,7 @@ import { Emitter } from "./engine"
 import type {
   ConnectionStatus,
   Engine,
+  PairingState,
   PickRunMessage,
   Unsubscribe,
 } from "./engine"
@@ -41,6 +42,7 @@ export class HelperEngine implements Engine {
   private status$ = new Emitter<ConnectionStatus>()
   private state$ = new Emitter<StateMessage>()
   private error$ = new Emitter<string>()
+  private pairing$ = new Emitter<PairingState>()
   private meters$ = new Emitter<MetersMessage>()
   private tuner$ = new Emitter<TunerMessage>()
   private picking$ = new Emitter<PickingMessage>()
@@ -66,6 +68,10 @@ export class HelperEngine implements Engine {
   send(cmd: ClientCommand) {
     if (this.ws?.readyState === WebSocket.OPEN)
       this.ws.send(JSON.stringify(cmd))
+  }
+
+  pair(code: string) {
+    this.send({ type: "pair", code })
   }
 
   setParam(id: ParamId, value: number) {
@@ -102,6 +108,9 @@ export class HelperEngine implements Engine {
   onError(cb: (m: string) => void): Unsubscribe {
     return this.error$.subscribe(cb)
   }
+  onPairing(cb: (p: PairingState) => void): Unsubscribe {
+    return this.pairing$.subscribe(cb)
+  }
   onMeters(cb: (m: MetersMessage) => void): Unsubscribe {
     return this.meters$.subscribe(cb)
   }
@@ -123,6 +132,7 @@ export class HelperEngine implements Engine {
 
     ws.onopen = () => {
       this.status$.emit("connected")
+      this.pairing$.emit({ needed: false, attemptsLeft: null })
       ws.send(JSON.stringify({ type: "hello" }))
     }
     ws.onmessage = (ev) =>
@@ -139,7 +149,15 @@ export class HelperEngine implements Engine {
   private dispatch(msg: ServerMessage) {
     switch (msg.type) {
       case "state":
+        // Receiving state means we're trusted — clear any pairing prompt.
+        this.pairing$.emit({ needed: false, attemptsLeft: null })
         this.state$.emit(msg)
+        break
+      case "needPair":
+        this.pairing$.emit({ needed: true, attemptsLeft: null })
+        break
+      case "pairFailed":
+        this.pairing$.emit({ needed: true, attemptsLeft: msg.attemptsLeft })
         break
       case "meters":
         this.meters$.emit(msg)

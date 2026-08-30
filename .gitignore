@@ -9,3 +9,7 @@ captures-*.wav
 
 # Local-dev tones only — copyrighted, never commit (see helper/starter/ for the shippable pack)
 assets/
+
+# Hosted /app is a build output (pnpm --dir web build:app). The landing page's
+# hand-written files under site/ ARE committed; the generated app is not.
+/site/app/

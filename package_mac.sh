@@ -66,7 +66,10 @@ codesign --force --deep --sign - "$APP" 2>/dev/null \
   && echo "==> Ad-hoc signed" || echo "==> Ad-hoc sign skipped"
 
 # --- build the .dmg (drag-to-Applications) ---
-DMG="dist/riffamp-$VERSION.dmg"
+# Stable (unversioned) name so the site can link releases/latest/download/riffamp.dmg
+# without a per-release edit. The version lives in the GitHub release tag + the
+# app's Info.plist, not the filename.
+DMG="dist/riffamp.dmg"
 echo "==> Building $DMG"
 STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/"

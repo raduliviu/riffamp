@@ -13,7 +13,9 @@ DefaultDirName={localappdata}\Programs\RiffAmp
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=..\dist
-OutputBaseFilename=riffamp-setup-{#AppVersion}
+; Stable (unversioned) name so the site links releases/latest/download/riffamp-setup.exe
+; without a per-release edit; the version is carried by the release tag + AppVersion.
+OutputBaseFilename=riffamp-setup
 SetupIconFile=..\helper\resources\riffamp.ico
 UninstallDisplayIcon={app}\riffamp-helper.exe
 Compression=lzma2

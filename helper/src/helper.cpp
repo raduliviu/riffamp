@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
 
     // Load persisted settings before initBuffers so the buffer size takes effect
     // (DSP buffers are sized here). Devices are resolved later (need PortAudio).
-    const fs::path configPath = platform::exeDir() / "riffamp-config.json";
+    const fs::path configPath = platform::dataDir() / "riffamp-config.json";
     const Config cfg = loadConfig(configPath);
     if (cfg.present) {
         if (cfg.buffer == 64 || cfg.buffer == 128 || cfg.buffer == 256) engine.opt.buffer = cfg.buffer;
@@ -82,11 +82,11 @@ int main(int argc, char** argv) {
     engine.initBuffers();
 
     Control control{engine};
-    control.presetsFile = platform::exeDir() / "riffamp-presets.json";
+    control.presetsFile = platform::dataDir() / "riffamp-presets.json";
     control.loadPresetsFromDisk();
-    control.drumsFile = platform::exeDir() / "riffamp-drums.json";
+    control.drumsFile = platform::dataDir() / "riffamp-drums.json";
     control.loadDrumsFromDisk();
-    control.groovesFile = platform::exeDir() / "riffamp-grooves.json";
+    control.groovesFile = platform::dataDir() / "riffamp-grooves.json";
     control.loadGroovesFromDisk();
     control.assets.root = engine.opt.assets;
     control.assets.scan();
@@ -147,7 +147,7 @@ int main(int argc, char** argv) {
     // Pairing: local origins are trusted; the hosted app must pair once with a
     // code printed here. Per-connection trust is tracked by socket pointer.
     Pairing pairing;
-    pairing.init(platform::exeDir() / "riffamp-paired.json");
+    pairing.init(platform::dataDir() / "riffamp-paired.json");
     constexpr int kMaxPairAttempts = 5;
     struct Conn { bool trusted = false; std::string origin; int attempts = 0; };
     std::map<ix::WebSocket*, Conn> conns;
@@ -301,7 +301,7 @@ int main(int argc, char** argv) {
     std::vector<float> fluxBuf(8192);
     std::vector<uint64_t> fluxOnsets;
     while (platform::gRunning.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        platform::tickSleep(40);  // sleeps; on mac also pumps the menu-bar run loop
 
         // Flush the rig to disk ~400 ms after the last change (coalesces drags).
         if (control.cfgDirty.load() && nowMs() - control.cfgTouchMs.load() > 400) {
@@ -427,7 +427,7 @@ int main(int argc, char** argv) {
         // against real playing — analyze with `picking_test <wav>`).
         if (engine.captureState.load(std::memory_order_acquire) == 3) {
             engine.captureState.store(0);
-            const fs::path wavPath = platform::exeDir() / "riffamp-capture.wav";
+            const fs::path wavPath = platform::dataDir() / "riffamp-capture.wav";
             drwav_data_format fmt{};
             fmt.container = drwav_container_riff;
             fmt.format = DR_WAVE_FORMAT_IEEE_FLOAT;

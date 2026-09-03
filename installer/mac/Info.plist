@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>RiffAmp</string>
+  <key>CFBundleDisplayName</key>
+  <string>RiffAmp</string>
+  <key>CFBundleIdentifier</key>
+  <string>app.riffamp.helper</string>
+  <key>CFBundleVersion</key>
+  <string>__VERSION__</string>
+  <key>CFBundleShortVersionString</key>
+  <string>__VERSION__</string>
+  <key>CFBundleExecutable</key>
+  <string>riffamp-helper</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleIconFile</key>
+  <string>riffamp</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <!-- Background UI agent: RiffAmp is a headless service that serves its UI in
+       the browser (the mac equivalent of the Windows tray app). Without this a
+       plain executable in a .app bounces in the Dock forever, since it never
+       registers a GUI run loop with the window server. -->
+  <key>LSUIElement</key>
+  <true/>
+  <!-- Required so macOS shows the mic prompt (RiffAmp captures the guitar via
+       CoreAudio). Without this the app is denied input with no prompt. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>RiffAmp processes your guitar's audio input in real time.</string>
+</dict>
+</plist>

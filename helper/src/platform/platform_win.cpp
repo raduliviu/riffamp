@@ -3,6 +3,7 @@
 #include "platform.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <thread>
 
@@ -133,6 +134,15 @@ std::filesystem::path exeDir() {
     char buf[MAX_PATH];
     GetModuleFileNameA(nullptr, buf, MAX_PATH);
     return std::filesystem::path(buf).parent_path();
+}
+
+std::filesystem::path dataDir() {
+    // The installer targets a user-writable dir, so config lives beside the exe.
+    return exeDir();
+}
+
+void tickSleep(int ms) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 
 void openUrl(const char* url) {

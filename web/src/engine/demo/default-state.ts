@@ -42,7 +42,11 @@ export function demoState(params: AmpParams, sampleRate: number): StateMessage {
   return {
     type: "state",
     version: KNOWN_PROTOCOL_VERSION,
-    params,
+    // Fresh object each emit: the engine mutates one params singleton in place,
+    // so passing it through would keep the same reference and zustand selectors
+    // on `state.params` would never re-render (the mute toggle only updated on
+    // a tab switch). The helper is immune — it parses a new object per message.
+    params: { ...params },
     model: "Obsidian",
     ir: "4x12 Full",
     models: DEMO_MODELS,

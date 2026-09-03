@@ -7,6 +7,7 @@ import { DevicePicker } from "./settings/device-picker"
 
 export function SettingsView() {
   const state = useEngineStore((s) => s.state)
+  const isDemo = useEngineStore((s) => s.kind === "demo")
   if (!state) return null
   const { audio, engine } = state
 
@@ -23,12 +24,30 @@ export function SettingsView() {
         <DevicePicker audio={audio} />
       </Section>
 
-      <Section title="BUFFER">
-        <BufferPicker audio={audio} />
-        {pendingParts.length > 0 && (
-          <p className="mt-3 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
-            Restart RiffAmp to apply: {pendingParts.join(", ")}.
-          </p>
+      <Section title={isDemo ? "LATENCY" : "BUFFER"}>
+        {isDemo ? (
+          <div className="space-y-2 text-sm">
+            <p className="text-muted-foreground">
+              The browser demo runs at a fixed latency the browser controls —
+              enough to play, but you'll feel it. Buffer size and true low
+              latency (sub-10 ms) need the native app.
+            </p>
+            <a
+              href="https://riffamp.app/#download"
+              className="inline-block rounded-md border border-emerald-500/60 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-500 transition-colors hover:bg-emerald-500/25"
+            >
+              Install the app for tight, latency-free playing →
+            </a>
+          </div>
+        ) : (
+          <>
+            <BufferPicker audio={audio} />
+            {pendingParts.length > 0 && (
+              <p className="mt-3 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
+                Restart RiffAmp to apply: {pendingParts.join(", ")}.
+              </p>
+            )}
+          </>
         )}
       </Section>
 

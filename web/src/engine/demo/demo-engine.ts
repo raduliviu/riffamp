@@ -15,7 +15,9 @@ import type {
   Unsubscribe,
 } from "../engine"
 import type {
+  AudioState,
   ClientCommand,
+  DeviceInfo,
   MetersMessage,
   ParamId,
   PedalType,
@@ -24,6 +26,7 @@ import type {
   TunerMessage,
 } from "../protocol"
 import { DemoAudioGraph } from "./audio-graph"
+import type { AudioDevice } from "./audio-graph"
 import { demoParams, demoState } from "./default-state"
 import { DemoMetronome } from "./metronome"
 import { DemoPicking } from "./picking"
@@ -47,6 +50,14 @@ export class DemoEngine implements Engine {
   private tunerBuf: Float32Array<ArrayBuffer> | null = null
   private started = false
 
+  // Real audio devices (browsers CAN enumerate/select these — what they can't
+  // do is low latency or buffer control, which is the native app's job).
+  private inputs: AudioDevice[] = []
+  private outputs: AudioDevice[] = []
+  private inputDevice = 0 // index into `inputs`
+  private outputDevice = 0 // index into `outputs`
+  private inCh = 1 // 1-based guitar channel
+
   private status$ = new Emitter<ConnectionStatus>()
   private state$ = new Emitter<StateMessage>()
   private error$ = new Emitter<string>()
@@ -61,7 +72,8 @@ export class DemoEngine implements Engine {
     this.status$.emit("connecting")
     this.graph
       .init()
-      .then(() => {
+      .then(async () => {
+        await this.refreshDevices()
         this.metro = new DemoMetronome(this.graph.ctx)
         this.picking = new DemoPicking({
           ctx: this.graph.ctx,
@@ -131,9 +143,45 @@ export class DemoEngine implements Engine {
       case "cancelPickRun":
         this.picking?.cancelRun()
         break
-      // Pedals, drums, presets, device/buffer, pairing: no-ops in the demo
-      // (the views that issue them are hidden or inert here).
+      case "setAudioDevice":
+        void this.changeDevices(cmd.input, cmd.output)
+        break
+      // Buffer, pedals, drums, presets, pairing: no-ops in the demo (buffer is
+      // native-only; the other views are hidden or inert here).
     }
+  }
+
+  /** Enumerate real devices and map the active input to its list index. */
+  private async refreshDevices(): Promise<void> {
+    try {
+      const { inputs, outputs } = await this.graph.devices()
+      this.inputs = inputs
+      this.outputs = outputs
+      const active = this.graph.inputDeviceId
+      const i = inputs.findIndex((d) => d.deviceId === active)
+      this.inputDevice = i >= 0 ? i : 0
+      this.outputDevice = 0 // system default until the user picks one
+      this.inCh = this.graph.currentChannel + 1
+    } catch {
+      /* enumeration can fail on locked-down browsers; keep defaults */
+    }
+  }
+
+  private async changeDevices(inIdx: number, outIdx: number): Promise<void> {
+    try {
+      if (inIdx !== this.inputDevice && this.inputs[inIdx]) {
+        this.inputDevice = inIdx
+        await this.graph.openInput(this.inputs[inIdx].deviceId, this.inCh - 1)
+        this.inCh = this.graph.currentChannel + 1
+      }
+      if (outIdx !== this.outputDevice && this.outputs[outIdx]) {
+        this.outputDevice = outIdx
+        await this.graph.setOutputDevice(this.outputs[outIdx].deviceId)
+      }
+    } catch (e) {
+      this.error$.emit(micErrorMessage(e))
+    }
+    this.emitState()
   }
 
   pair(_code: string) {
@@ -148,6 +196,12 @@ export class DemoEngine implements Engine {
   }
 
   private applyParam(id: ParamId, value: number) {
+    if (id === "inCh") {
+      this.inCh = value
+      this.graph.setInputChannel(value - 1)
+      this.emitState()
+      return
+    }
     const p = this.params as unknown as Record<string, number | boolean>
     // metroOn/mute/tunerOn/pickOn/metroAccent are booleans over the wire (0/1).
     if (
@@ -270,7 +324,34 @@ export class DemoEngine implements Engine {
     s.model = this.model
     s.ir = this.ir
     s.pickRunActive = this.pickRunActive
+    s.audio = this.audioState()
     this.state$.emit(s)
+  }
+
+  private audioState(): AudioState {
+    const toInfo = (d: AudioDevice, i: number): DeviceInfo => ({
+      index: i,
+      name: d.label,
+      api: "WebAudio",
+      channels: 0,
+    })
+    // Fall back to a single placeholder so the picker always renders something.
+    const inputDevices = this.inputs.length
+      ? this.inputs.map(toInfo)
+      : [{ index: 0, name: "Browser input", api: "WebAudio", channels: 1 }]
+    const outputDevices =
+      this.graph.supportsOutputRouting && this.outputs.length
+        ? this.outputs.map(toInfo)
+        : [{ index: 0, name: "System default", api: "WebAudio", channels: 2 }]
+    return {
+      inputDevice: this.inputDevice,
+      outputDevice: this.outputDevice,
+      inCh: this.inCh,
+      inChannels: this.graph.inChannels,
+      buffer: 128,
+      inputDevices,
+      outputDevices,
+    }
   }
 
   onStatus(cb: (s: ConnectionStatus) => void): Unsubscribe {

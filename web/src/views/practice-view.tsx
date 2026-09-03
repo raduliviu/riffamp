@@ -1,5 +1,6 @@
 // Practice: tuner, metronome, drum machine + groove library.
 
+import { DemoLocked } from "@/components/shell/demo-locked"
 import { Section } from "@/components/shell/section"
 import { useEngineStore } from "@/engine/store"
 import { DrumSection } from "./practice/drum-section"
@@ -9,6 +10,7 @@ import { TunerSection } from "./practice/tuner-section"
 
 export function PracticeView() {
   const state = useEngineStore((s) => s.state)
+  const isDemo = useEngineStore((s) => s.kind === "demo")
   if (!state) return null
 
   return (
@@ -23,7 +25,11 @@ export function PracticeView() {
         <PickingSection />
       </Section>
       <Section title="DRUM MACHINE">
-        <DrumSection drums={state.drums} grooves={state.grooves} />
+        {isDemo ? (
+          <DemoLocked feature="Drum machine" />
+        ) : (
+          <DrumSection drums={state.drums} grooves={state.grooves} />
+        )}
       </Section>
     </div>
   )

@@ -9,6 +9,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -62,6 +63,36 @@ std::filesystem::path dataDir() {
 void openUrl(const char* url) {
     const std::string cmd = std::string("open '") + url + "'";
     std::system(cmd.c_str());
+}
+
+std::optional<std::string> httpGet(const std::string& url, const std::string& userAgent) {
+    @autoreleasepool {
+        NSURL* nsUrl = [NSURL URLWithString:[NSString stringWithUTF8String:url.c_str()]];
+        if (!nsUrl) return std::nullopt;
+        NSMutableURLRequest* req = [NSMutableURLRequest requestWithURL:nsUrl];
+        [req setValue:[NSString stringWithUTF8String:userAgent.c_str()]
+            forHTTPHeaderField:@"User-Agent"];
+        [req setValue:@"application/vnd.github+json" forHTTPHeaderField:@"Accept"];
+        req.timeoutInterval = 8.0;
+
+        __block std::string body;
+        __block bool ok = false;
+        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+        NSURLSessionDataTask* task = [[NSURLSession sharedSession]
+            dataTaskWithRequest:req
+              completionHandler:^(NSData* data, NSURLResponse* resp, NSError* err) {
+                  NSHTTPURLResponse* http = (NSHTTPURLResponse*)resp;
+                  if (!err && data && http.statusCode >= 200 && http.statusCode < 300) {
+                      body.assign(static_cast<const char*>(data.bytes), data.length);
+                      ok = true;
+                  }
+                  dispatch_semaphore_signal(sem);
+              }];
+        [task resume];
+        dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)));
+        if (!ok) return std::nullopt;
+        return body;
+    }
 }
 
 void fatalAlert(const std::string&) {

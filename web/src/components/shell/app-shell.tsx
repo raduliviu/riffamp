@@ -13,6 +13,7 @@ import { Header } from "./header"
 import { MixerFooter } from "./mixer-footer"
 import { OfflineCard } from "./offline-card"
 import { PairingCard } from "./pairing-card"
+import { UpdateBanner } from "./update-banner"
 
 const TAB_KEY = "riffamp:tab"
 
@@ -37,6 +38,7 @@ export function AppShell() {
         <OfflineCard />
       ) : (
         <>
+          <UpdateBanner />
           <EnableBanner />
           <main className="flex flex-1 flex-col gap-4 p-4">
             <Tabs value={tab} onValueChange={selectTab}>

@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "audio_io.h"
+#include "updates.h"
 
 namespace webamp {
 
@@ -334,7 +335,7 @@ struct Control {
         json grooveNames = json::array();
         for (const auto& gr : grooves) grooveNames.push_back(gr.value("name", std::string()));
         std::lock_guard<std::mutex> lk(engine.stateMx);
-        return {
+        json st = {
             {"type", "state"},
             {"version", kVersion},
             {"params",
@@ -374,6 +375,13 @@ struct Control {
               // wildly overstates. Only a physical loopback measurement is truth.
               {"reportedLatencyMs", engine.repInMs + engine.repOutMs}}},
         };
+        // A newer release is available (P6a); the UI shows a download banner.
+        auto& upd = webamp::updateSlot();
+        if (upd.ready.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> ulk(upd.mx);
+            st["update"] = {{"version", upd.version}, {"url", upd.url}, {"notes", upd.notes}};
+        }
+        return st;
     }
 
     // Returns the reply; state broadcasts are handled by the caller via changed=true.

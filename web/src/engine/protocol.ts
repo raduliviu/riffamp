@@ -98,6 +98,14 @@ export interface EngineInfo {
   reportedLatencyMs: number
 }
 
+/** A newer helper release is available (P6a). Present only when the helper's
+ *  startup check found one; the UI shows a download banner. */
+export interface UpdateInfo {
+  version: string
+  url: string
+  notes: string
+}
+
 export interface StateMessage {
   type: "state"
   version: string
@@ -114,6 +122,8 @@ export interface StateMessage {
   /** A pick run (P5b) is currently counting in or recording. */
   pickRunActive: boolean
   engine: EngineInfo
+  /** Set when a newer helper release is available (P6a). */
+  update?: UpdateInfo
 }
 
 export interface MetersMessage {

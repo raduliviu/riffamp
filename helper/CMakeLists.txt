@@ -8,6 +8,21 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Release version: parse it out of installer/riffamp.iss so the binary tracks the
+# single source of truth. A version bump there needs a CMake *reconfigure* (not
+# just a build) to reach the binary. Falls back to the compiled-in dev marker.
+# Overridable (-DRIFFAMP_VERSION=... or CI); otherwise read from the .iss.
+if(NOT RIFFAMP_VERSION)
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../installer/riffamp.iss" _iss)
+  string(REGEX MATCH "AppVersion[ 	]+\"([0-9]+\.[0-9]+\.[0-9]+)\"" _m "${_iss}")
+  if(CMAKE_MATCH_1)
+    set(RIFFAMP_VERSION "${CMAKE_MATCH_1}")
+  else()
+    message(WARNING "Could not read AppVersion from installer/riffamp.iss; using dev version")
+  endif()
+endif()
+message(STATUS "RiffAmp release version: ${RIFFAMP_VERSION}")
+
 include(FetchContent)
 
 if(WIN32)
@@ -135,6 +150,11 @@ target_include_directories(picking_test PRIVATE "${WEBAMP_DSP_DIR}" src/engine
   "${drlibs_SOURCE_DIR}")                        # wav-analysis mode
 target_compile_features(picking_test PRIVATE cxx_std_17)
 
+add_executable(updates_test src/updates_test.cpp)
+target_include_directories(updates_test PRIVATE src/engine
+  "${namcore_SOURCE_DIR}/Dependencies/nlohmann")  # updates.h uses json.hpp
+target_compile_features(updates_test PRIVATE cxx_std_17)
+
 # The helper: portable core + one platform shell file.
 if(WIN32)
   set(WEBAMP_PLATFORM_SOURCES src/platform/platform_win.cpp resources/riffamp.rc)
@@ -150,8 +170,11 @@ target_include_directories(riffamp-helper PRIVATE
   "${WEBAMP_DSP_DIR}" src/engine src/platform)
 target_link_libraries(riffamp-helper PRIVATE
   portaudio "$<LINK_LIBRARY:WHOLE_ARCHIVE,namcore>" fftconvolver ixwebsocket)
+if(RIFFAMP_VERSION)
+  target_compile_definitions(riffamp-helper PRIVATE RIFFAMP_VERSION="${RIFFAMP_VERSION}")
+endif()
 if(WIN32)
-  target_link_libraries(riffamp-helper PRIVATE user32 shell32 gdi32)
+  target_link_libraries(riffamp-helper PRIVATE user32 shell32 gdi32 winhttp)
   # Tray app: windows subsystem (no console) but keep main() as the entry point.
   target_link_options(riffamp-helper PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:mainCRTStartup")
 elseif(APPLE)

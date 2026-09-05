@@ -25,6 +25,12 @@ needs no change.
 - `installer/riffamp.iss` → `#define AppVersion "X.Y.Z"`
 - `package_mac.sh` → `VERSION="X.Y.Z"`
 
+`installer/riffamp.iss` is the single source of truth: CMake reads `AppVersion`
+from it and compiles it into the helper (shown in-app and used by the update
+check), so the build step below must **re-run CMake configure** — not just
+`--build` — for a version bump to reach the binary (`cmake -S helper -B
+helper/build` does this; the packaging commands below already reconfigure).
+
 Commit + push the bump.
 
 ## 2. Build + package each platform

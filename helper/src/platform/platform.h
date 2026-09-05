@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <optional>
 #include <functional>
 #include <string>
 
@@ -31,6 +32,12 @@ std::filesystem::path dataDir();
 
 // Open a URL in the default browser.
 void openUrl(const char* url);
+
+// Blocking HTTPS GET (OS stack: WinHTTP / NSURLSession). Returns the
+// response body on 2xx, std::nullopt on any failure. Used only for the
+// update check against a hardcoded GitHub URL — never a supplied one.
+std::optional<std::string> httpGet(const std::string& url,
+                                   const std::string& userAgent);
 
 // Surface a fatal error to the user (GUI box on Windows; stderr already has
 // the message on both platforms, so mac needs nothing extra).

@@ -32,6 +32,8 @@
 #include "pairing.h"
 #include "flux.h"
 #include "picking_tracker.h"
+#include "updates.h"
+#include "version.h"
 #include "platform.h"
 
 #include <ixwebsocket/IXHttpServer.h>
@@ -279,7 +281,31 @@ int main(int argc, char** argv) {
     };
     platform::startShell();
 
+    // Update check (P6a, phase 1: notify only). One HTTPS GET to GitHub on a
+    // detached thread so startup never blocks on the network; the result is
+    // stored on the engine and surfaced through state (broadcast once by the
+    // loop below, and included in every hello reply after). Downloads/runs
+    // nothing. Skipped for un-versioned dev builds so they aren't nagged.
+    if (std::string(webamp::kAppVersion).find("dev") == std::string::npos) {
+        std::thread([]() {
+            auto body = platform::httpGet(webamp::kReleasesApi, webamp::kUpdateUserAgent);
+            if (!body) return;
+            auto up = webamp::parseLatestRelease(*body, webamp::kAppVersion);
+            if (!up) return;
+            auto& slot = webamp::updateSlot();  // process-lifetime; safe after teardown
+            {
+                std::lock_guard<std::mutex> lk(slot.mx);
+                slot.version = up->version;
+                slot.url = up->url;
+                slot.notes = up->notes;
+            }
+            slot.ready.store(true, std::memory_order_release);
+            std::printf("Update available: %s\n", up->version.c_str());
+        }).detach();
+    }
+
     // Meter + beat broadcast loop (~25 Hz) until the shell quits us.
+    bool updateBroadcast = false;  // send state once when the check finds an update
     int tunerTick = 0;
     std::vector<float> tunerWin(4096);
     PickingTracker picking;
@@ -311,6 +337,14 @@ int main(int argc, char** argv) {
 
         const auto clients = server.getClients();
         if (clients.empty()) continue;
+
+        // The update check (detached thread) just found a newer release: push
+        // state once so any connected UI shows the banner (later connects get
+        // it in their hello reply). Broadcasting stays on this thread only.
+        if (!updateBroadcast && webamp::updateSlot().ready.load(std::memory_order_acquire)) {
+            updateBroadcast = true;
+            broadcast(control.stateJson().dump());
+        }
 
         // Tuner analysis every other tick (~12 Hz) — YIN runs here, never on
         // the audio thread. (tunerTick advances once per loop, below; tuner

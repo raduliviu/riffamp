@@ -5,10 +5,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <optional>
+#include <string>
 #include <thread>
 
 #include <windows.h>
 #include <shellapi.h>
+#include <winhttp.h>
 
 namespace webamp::platform {
 namespace {
@@ -147,6 +150,61 @@ void tickSleep(int ms) {
 
 void openUrl(const char* url) {
     ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+std::optional<std::string> httpGet(const std::string& url, const std::string& userAgent) {
+    // url/userAgent are ASCII (a hardcoded GitHub URL), so a widen-by-copy is safe.
+    const std::wstring wurl(url.begin(), url.end());
+    const std::wstring wua(userAgent.begin(), userAgent.end());
+
+    URL_COMPONENTS uc{};
+    uc.dwStructSize = sizeof(uc);
+    wchar_t host[256] = {}, path[2048] = {};
+    uc.lpszHostName = host;
+    uc.dwHostNameLength = 255;
+    uc.lpszUrlPath = path;
+    uc.dwUrlPathLength = 2047;
+    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) return std::nullopt;
+    host[uc.dwHostNameLength] = 0;
+
+    auto close = [](HINTERNET h) { if (h) WinHttpCloseHandle(h); };
+    HINTERNET session = WinHttpOpen(wua.c_str(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) return std::nullopt;
+    WinHttpSetTimeouts(session, 5000, 5000, 8000, 8000);
+    HINTERNET connect = WinHttpConnect(session, host, uc.nPort, 0);
+    HINTERNET request =
+        connect ? WinHttpOpenRequest(connect, L"GET", path, nullptr, WINHTTP_NO_REFERER,
+                                     WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                     (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0)
+                : nullptr;
+    std::optional<std::string> result;
+    if (request) {
+        WinHttpAddRequestHeaders(request, L"Accept: application/vnd.github+json\r\n",
+                                 static_cast<DWORD>(-1), WINHTTP_ADDREQ_FLAG_ADD);
+        if (WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0,
+                               0, 0) &&
+            WinHttpReceiveResponse(request, nullptr)) {
+            DWORD status = 0, len = sizeof(status);
+            WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                WINHTTP_HEADER_NAME_BY_INDEX, &status, &len, WINHTTP_NO_HEADER_INDEX);
+            std::string body;
+            DWORD avail = 0;
+            do {
+                if (!WinHttpQueryDataAvailable(request, &avail) || avail == 0) break;
+                std::string chunk(avail, '\0');
+                DWORD read = 0;
+                if (!WinHttpReadData(request, chunk.data(), avail, &read)) break;
+                chunk.resize(read);
+                body += chunk;
+            } while (avail > 0);
+            if (status >= 200 && status < 300) result = std::move(body);
+        }
+    }
+    close(request);
+    close(connect);
+    close(session);
+    return result;
 }
 
 void fatalAlert(const std::string& msg) {

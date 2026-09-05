@@ -2,7 +2,7 @@
 //
 //   input(device) ─▶ splitter[ch] ─▶ inGain ─▶ NAM(amp) ─▶ convolver(cab IR)
 //         ─▶ bass▸mid▸treble ─▶ outGain ─▶ analyserOut ─▶ speakers(sinkId)
-//   splitter[ch] ─▶ analyserIn, analyserFlux   (dry taps: meter, tuner, onsets)
+//   splitter[ch] ─▶ analyserIn, onsetNode      (dry taps: meter+tuner, onsets)
 //
 // The amp is the WASM NamNode (mono in/out); the cab is a native ConvolverNode
 // fed our .wav IR; the tone stack is three BiquadFilters. Guitar input needs
@@ -16,6 +16,7 @@
 // on a device change — the amp chain and analysers persist, so playback and the
 // tuner/picking taps survive it.
 
+import onsetWorkletUrl from "./onset-worklet?worker&url"
 import { NamEngine } from "neural-amp-modeler-wasm/engine"
 import type { NamNode } from "neural-amp-modeler-wasm/engine"
 import { IR_FILES, MODEL_FILE } from "./default-state"
@@ -40,7 +41,7 @@ type SinkCapableContext = AudioContext & {
 export class DemoAudioGraph {
   ctx!: AudioContext
   analyserIn!: AnalyserNode // dry input: meters + tuner (time domain)
-  analyserFlux!: AnalyserNode // dry input: onset detection (short FFT)
+  onsetNode!: AudioWorkletNode // dry input: onset detection (riffamp-onset worklet)
   analyserOut!: AnalyserNode
 
   // Live input state the engine reports back to the UI.
@@ -89,11 +90,17 @@ export class DemoAudioGraph {
     this.outGain = ctx.createGain()
     this.analyserIn = ctx.createAnalyser()
     this.analyserIn.fftSize = 2048
-    this.analyserFlux = ctx.createAnalyser()
-    this.analyserFlux.fftSize = 512 // ~11 ms window — crisp attacks for onsets
-    this.analyserFlux.smoothingTimeConstant = 0
     this.analyserOut = ctx.createAnalyser()
     this.analyserOut.fftSize = 1024
+
+    // Onset detector (picking trainer): the helper's flux.h ported to a worklet.
+    await ctx.audioWorklet.addModule(onsetWorkletUrl)
+    this.onsetNode = new AudioWorkletNode(ctx, "riffamp-onset", {
+      numberOfInputs: 1,
+      numberOfOutputs: 0,
+      channelCount: 1,
+      channelCountMode: "explicit",
+    })
 
     // The amp node.
     const engine = await NamEngine.attach(ctx)
@@ -169,7 +176,7 @@ export class DemoAudioGraph {
     }
     this.splitter.connect(this.inGain, ch, 0)
     this.splitter.connect(this.analyserIn, ch, 0)
-    this.splitter.connect(this.analyserFlux, ch, 0)
+    this.splitter.connect(this.onsetNode, ch, 0)
     this.currentChannel = ch
   }
 

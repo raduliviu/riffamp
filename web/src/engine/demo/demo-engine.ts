@@ -77,7 +77,7 @@ export class DemoEngine implements Engine {
         this.metro = new DemoMetronome(this.graph.ctx)
         this.picking = new DemoPicking({
           ctx: this.graph.ctx,
-          flux: this.graph.analyserFlux,
+          onsets: this.graph.onsetNode,
           metro: this.metro,
           grid: () => ({
             bpm: this.params.metroBpm,

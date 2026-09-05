@@ -1,32 +1,22 @@
-// Picking trainer for the demo (P5a/P5b in the browser). Onset detection is a
-// SuperFlux port of the native helper's detector: spectral flux computed in the
-// dB (log) domain against a 3-bin max-filtered previous frame — the max filter
-// absorbs a ringing string's vibrato/beating (energy sloshing between adjacent
-// bins) so only a real attack registers as novelty. Peak-picked against a
-// rolling median+MAD threshold (self-calibrating, so it survives the browser's
-// different magnitude scale) with a relative floor and a run-aware refractory.
-//
-// What's still weaker than the native helper is TIMING, not detection: onsets
-// are found by polling an AnalyserNode on a JS timer and stamped at poll time,
-// not sample-accurately in the audio thread — that jitter (a few ms) is why the
-// helper's evenness/rushing-dragging read tighter. Fixing that needs an
-// AudioWorklet; the detection quality here is now close to the native.
+// Picking trainer for the demo (P5a/P5b in the browser). Onset DETECTION lives
+// in an AudioWorklet (onset-worklet.ts → onset-detector.ts, a port of the
+// native helper's flux.h) and arrives here as timestamps on the AudioContext
+// clock — the same clock the demo metronome schedules its clicks on, so
+// onsets and clicks are directly comparable and sample-accurate. This class
+// owns the trainer state: the run (count-in, record, boundary) and the live
+// notes-per-beat readout. Scoring itself happens in the UI
+// (web/src/lib/pick-analysis.ts), exactly as with the helper.
 
 import type { PickRunMessage } from "../engine"
 import type { PickRunResultMessage, PickingMessage } from "../protocol"
 import type { DemoMetronome } from "./metronome"
 
-const POLL_MS = 6 // ~160 Hz onset polling
-const LIVE_MS = 80 // ~12 Hz live readout
-const HISTORY = 100 // flux frames kept for the adaptive threshold
-const MAX_BINS = 80 // ~7.5 kHz — guitar fundamentals + lower harmonics
-const FLOOR_DB = -100 // silence floor for spectral bins
-const BIN_FLOOR_DB = 1 // a bin must rise >1 dB to count as novelty (ignore ripple)
-const PEAK_FRAC = 0.1 // onset flux must be >=10% of the recent loudest
+const LIVE_MS = 80 // ~12 Hz live readout / run status
+const MAX_ONSETS = 4096 // a 16-bar run at sextuplets is ~1500 notes
 
 export interface PickingDeps {
   ctx: AudioContext
-  flux: AnalyserNode
+  onsets: AudioWorkletNode // the riffamp-onset worklet on the dry input
   metro: DemoMetronome
   grid: () => { bpm: number; beatsPerBar: number }
   sens: () => number
@@ -46,16 +36,8 @@ interface Run {
 
 export class DemoPicking {
   private d: PickingDeps
-  private prevMag: Float32Array<ArrayBuffer> // previous frame, floored dB
-  private curDb: Float32Array<ArrayBuffer> // scratch for the current frame
-  private freqDb: Float32Array<ArrayBuffer>
-  private havePrev = false
-  private history: number[] = []
-  private prevAbove = false
-  private lastOnset = -1
-  private onsets: number[] = [] // absolute audio times (s)
+  private onsets: number[] = [] // absolute audio times (s), from the worklet
 
-  private pollTimer: ReturnType<typeof setInterval> | null = null
   private liveTimer: ReturnType<typeof setInterval> | null = null
   private statusTimer: ReturnType<typeof setInterval> | null = null
 
@@ -65,20 +47,24 @@ export class DemoPicking {
 
   constructor(deps: PickingDeps) {
     this.d = deps
-    const bins = deps.flux.frequencyBinCount
-    this.prevMag = new Float32Array(new ArrayBuffer(bins * 4))
-    this.curDb = new Float32Array(new ArrayBuffer(bins * 4))
-    this.freqDb = new Float32Array(new ArrayBuffer(bins * 4))
+    deps.onsets.port.onmessage = (ev: MessageEvent) => {
+      const m = ev.data as { type: string; times?: number[] }
+      if (m.type !== "onsets" || !m.times) return
+      if (!this.enabled && !this.run) return // detector idle: nothing to collect
+      for (const t of m.times) this.onsets.push(t)
+      if (this.onsets.length > MAX_ONSETS)
+        this.onsets.splice(0, this.onsets.length - MAX_ONSETS)
+    }
   }
 
   setEnabled(on: boolean) {
+    const wasIdle = !this.enabled && !this.run
     this.enabled = on
     if (on) {
-      this.ensurePolling()
+      if (wasIdle) this.arm()
       this.startLive()
     } else {
       this.stopLive()
-      if (!this.run) this.stopPolling()
     }
   }
 
@@ -101,9 +87,10 @@ export class DemoPicking {
     const grid: number[] = []
     for (let i = 0; i < points; i++) grid.push(recStart + i * spb)
 
+    if (!this.enabled) this.arm()
     this.run = { bars, countIn, beatsPerBar, recStart, grid }
     this.onsets = []
-    this.ensurePolling()
+    this.configure()
     this.d.onRunActive(true)
     this.startStatus()
   }
@@ -116,93 +103,27 @@ export class DemoPicking {
   stop() {
     this.stopLive()
     this.stopStatus()
-    this.stopPolling()
     this.run = null
+    this.enabled = false
   }
 
-  // ---- onset detection -------------------------------------------------
+  // ---- detector control --------------------------------------------------
 
-  private ensurePolling() {
-    if (this.pollTimer) return
-    this.history = []
-    this.prevAbove = false
-    this.havePrev = false
-    this.prevMag.fill(FLOOR_DB)
-    this.pollTimer = setInterval(() => this.poll(), POLL_MS)
-  }
-  private stopPolling() {
-    if (this.pollTimer) clearInterval(this.pollTimer)
-    this.pollTimer = null
+  /** Fresh session: clear the detector's history and our collected onsets. */
+  private arm() {
+    this.onsets = []
+    this.d.onsets.port.postMessage({ type: "reset" })
+    this.configure()
   }
 
-  private poll() {
-    const a = this.d.flux
-    a.getFloatFrequencyData(this.freqDb) // dB per bin (log magnitude already)
-    const n = Math.min(MAX_BINS, this.freqDb.length)
-    const cur = this.curDb
-    for (let i = 0; i < n; i++)
-      cur[i] = this.freqDb[i] < FLOOR_DB ? FLOOR_DB : this.freqDb[i]
-
-    // Seed the previous frame on the first poll — no flux until we have one.
-    if (!this.havePrev) {
-      for (let i = 0; i < n; i++) this.prevMag[i] = cur[i]
-      this.havePrev = true
-      return
-    }
-
-    const prev = this.prevMag
-    let flux = 0
-    for (let i = 1; i < n; i++) {
-      // SuperFlux: novelty vs the 3-bin max of the previous frame. Ring
-      // beating/vibrato moves energy between neighbouring bins, so the max
-      // filter absorbs it; only a true attack clears it.
-      let p = prev[i]
-      if (prev[i - 1] > p) p = prev[i - 1]
-      if (i + 1 < n && prev[i + 1] > p) p = prev[i + 1]
-      const diff = cur[i] - p
-      if (diff > BIN_FLOOR_DB) flux += diff
-    }
-    // Swap buffers: this frame becomes the previous one.
-    this.prevMag = cur
-    this.curDb = prev
-
-    const thr = this.threshold()
-    const now = this.d.ctx.currentTime
-    const above = flux > thr
-    if (above && !this.prevAbove && now - this.lastOnset > this.minGap()) {
-      this.lastOnset = now
-      this.onsets.push(now)
-      if (this.onsets.length > 128) this.onsets.shift()
-    }
-    this.prevAbove = above
-
-    this.history.push(flux)
-    if (this.history.length > HISTORY) this.history.shift()
-  }
-
-  private threshold(): number {
-    if (this.history.length < 8) return Infinity // warm up before firing
-    const sorted = [...this.history].sort((a, b) => a - b)
-    const median = sorted[sorted.length >> 1]
-    const mad =
-      sorted
-        .map((v) => Math.abs(v - median))
-        .sort((a, b) => a - b)[sorted.length >> 1] || 1e-3
-    let peak = 0
-    for (const v of this.history) if (v > peak) peak = v
-    // Sensitivity 0 → conservative (k≈3), 1 → hair-trigger (k≈1); MAD→σ ×1.4826.
-    // Plus a relative floor: a real onset is never tiny next to the recent peak.
-    const k = 3.0 - 2 * clamp01(this.d.sens())
-    return Math.max(median + k * 1.4826 * mad, PEAK_FRAC * peak, 2)
-  }
-
-  private minGap(): number {
+  /** Push sensitivity + the expected-rate gate to the worklet (idempotent). */
+  private configure() {
     const { bpm } = this.d.grid()
-    // Run-aware: tight during a graded run (finger-damp contacts sit near 2/3
-    // of a subdivision), looser in free play so off-target rates still read.
-    const frac = this.run ? 0.8 : 0.45
-    const gap = (60 / bpm / this.d.target()) * frac
-    return Math.max(0.04, gap)
+    // Run-aware gate, mirroring the helper: 0.8x the target subdivision while
+    // a run is graded, 0.6x in free play so off-target subdivisions still read.
+    const frac = this.run ? 0.8 : 0.6
+    const minGap = Math.max(0.025, (60 / bpm / this.d.target()) * frac)
+    this.d.onsets.port.postMessage({ type: "config", sens: this.d.sens(), minGap })
   }
 
   // ---- live readout ----------------------------------------------------
@@ -217,6 +138,7 @@ export class DemoPicking {
   }
 
   private emitLive() {
+    this.configure() // tempo/target/sens may have changed
     const { bpm, beatsPerBar } = this.d.grid()
     const beatMs = 60000 / bpm
     const now = this.d.ctx.currentTime
@@ -254,7 +176,9 @@ export class DemoPicking {
     const now = this.d.ctx.currentTime
     const spb = 60 / this.d.grid().bpm
     const end = run.grid[run.grid.length - 1]
-    if (now >= end + spb * 0.5) {
+    // Finalize half a beat after the boundary, but never before the
+    // detector's emission hold (its refractory gate, ≤150 ms) has passed.
+    if (now >= end + Math.max(spb * 0.5, 0.2)) {
       this.finishRun(true)
       return
     }
@@ -288,7 +212,7 @@ export class DemoPicking {
     this.stopStatus()
     this.d.onRunActive(false)
     if (!this.metroWasRunning) this.d.metro.stop()
-    if (!this.enabled) this.stopPolling()
+    if (this.enabled) this.configure() // back to the free-play gate
 
     if (emitResult && run) {
       const spb = 60 / this.d.grid().bpm
@@ -309,10 +233,6 @@ export class DemoPicking {
       this.d.emitPickRun(result)
     }
   }
-}
-
-function clamp01(v: number): number {
-  return v < 0 ? 0 : v > 1 ? 1 : v
 }
 
 function ioiCv(times: number[]): number | null {

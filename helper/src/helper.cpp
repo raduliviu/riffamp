@@ -344,11 +344,15 @@ int main(int argc, char** argv) {
             flux.setSensitivity(engine.pickSens.load(std::memory_order_relaxed));
             // Expected-rate gate: tight during a run (the grid is being graded,
             // and between-note contact noise sits at ~2/3 subdivision), looser
-            // in free play so off-target subdivisions still register.
+            // in free play so off-target subdivisions still register. Free
+            // play was 0.45x; the P5f detector (level-normalized, lower
+            // relative floor) exposed ring artefacts 65-110 ms after an attack
+            // at that width — real free-play captures over-counted ~35% —
+            // and 0.6x still passes sextuplets against a 16th target.
             const float bpmNow = std::max(30.0f, engine.metroBpm.load(std::memory_order_relaxed));
             const float tgt =
                 static_cast<float>(std::max(1, engine.pickTarget.load(std::memory_order_relaxed)));
-            const float frac = engine.pickRun.active() ? 0.8f : 0.45f;
+            const float frac = engine.pickRun.active() ? 0.8f : 0.6f;
             flux.setMinGap(frac * 60.0f / (bpmNow * tgt));
 
             // Map the ring cursor to absolute sample time once per stream. The

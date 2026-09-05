@@ -9,7 +9,8 @@
 // click after the last bar ends it (feedClick returns true so the caller stops
 // the metronome). The result is not built at the boundary: rings drain ~25 Hz
 // and a just-late last pickstroke still belongs to the phrase, so poll(now)
-// finalizes half a beat after the boundary and returns the result exactly once.
+// finalizes half a beat (at least 200 ms) after the boundary and returns the
+// result exactly once.
 // The result is raw timestamps (ms); all scoring happens in the UI.
 
 #pragma once
@@ -77,7 +78,12 @@ struct PickRun {
         if (phase == Phase::ending) {
             const double halfBeat =
                 0.5 * static_cast<double>(clicks.back() - clicks[clicks.size() - 2]);
-            if (static_cast<double>(now) < static_cast<double>(clicks.back()) + halfBeat)
+            // Wait for stragglers: half a beat, but never less than the onset
+            // detector's emission hold (its refractory gate, ≤150 ms) plus one
+            // control tick (40 ms) — otherwise a just-late last note inside the
+            // half-beat margin could still be held when the result is built.
+            const double wait = std::max(halfBeat, 0.2 * sr);
+            if (static_cast<double>(now) < static_cast<double>(clicks.back()) + wait)
                 return json();
             json r = result(halfBeat);
             phase = Phase::idle;

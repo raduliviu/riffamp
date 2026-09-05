@@ -14,6 +14,7 @@
 
 #include "picking.h"
 #include "flux.h"
+#include "sparsity.h"
 #include "pick_run.h"
 
 #define DR_WAV_IMPLEMENTATION
@@ -100,6 +101,7 @@ std::vector<uint64_t> detect(const std::vector<float>& buf, float sens = 0.5f,
     if (minGapSec > 0) det.setMinGap(minGapSec);
     std::vector<uint64_t> ts;
     det.push(buf.data(), static_cast<int>(buf.size()), ts);
+    det.flush(ts);
     return ts;
 }
 
@@ -108,8 +110,68 @@ std::vector<uint64_t> detect(const std::vector<float>& buf, float sens = 0.5f,
 // print every onset with levels, so constants get tuned against reality
 // instead of synthetic plucks.
 //   picking_test <wav> [sens=0.5] [minGapMs=0] [bpm target — prints npb]
+// Detector experiments (P5f) are selected by leading --flags, see main().
+struct WavOpts {
+    std::string det = "flux";  // flux | sparsity
+    int fft = 512;             // STFT window (hop stays 256): 512 | 1024 | 2048
+    int norm = -1;             // flux: level normalizer on/off
+    float silenceDb = -999.0f; // flux: raw-frame silence gate (dBFS rms)
+    float normAtk = -1.0f;     // flux: normalizer attack (s)
+    float normGain = -1.0f;    // flux: normalizer max gain (linear)
+    int sw = -1;               // peak picker: stronger-wins refractory (1) or first-wins (0)
+    float pmf = -1.0f;         // peak picker: post-onset mask fraction (0 = off)
+    float swr = -1.0f;         // peak picker: stronger-wins ratio
+    float pmt = -1.0f;         // peak picker: post-onset mask tau (ms)
+    float gamma = -1.0f;       // sparsity: quiet-bin fraction (default in header)
+    float absFloor = -1.0f;    // peak picker absolute floor override
+    std::string dump;          // write per-frame ODF as "t_ms,odf" CSV here
+};
+
+// Shared per-detector run: configure, set gates, push, optionally dump the ODF.
+template <class Det>
+std::vector<uint64_t> runDet(Det& det, const std::vector<float>& mono, unsigned sr, float sens,
+                             float minGapMs, double bpm, int target, float peakFrac,
+                             const WavOpts& o) {
+    det.configure(static_cast<float>(sr));
+    det.setSensitivity(sens);
+    if (peakFrac >= 0) det.peakFrac = peakFrac;
+    if (o.absFloor >= 0) det.pick.absFloor = o.absFloor;
+    if (o.sw >= 0) det.pick.strongerWins = o.sw != 0;
+    if (o.pmf >= 0) det.pick.postMaskFrac = o.pmf;
+    if (o.swr > 0) det.pick.swRatio = o.swr;
+    if (o.pmt > 0) det.pick.postMaskTau = o.pmt / 1000.0f;
+    if (minGapMs > 0)
+        det.setMinGap(minGapMs / 1000.0f);  // explicit gap wins over the bpm-derived default
+    else if (bpm > 0 && target > 0)  // engine's free-play fraction (helper.cpp)
+        det.setMinGap(0.6f * 60.0f / static_cast<float>(bpm * target));
+
+    std::vector<std::pair<uint64_t, float>> odf;
+    det.odfDump = &odf;
+    std::vector<uint64_t> ts;
+    det.push(mono.data(), static_cast<int>(mono.size()), ts);
+    det.flush(ts);
+
+    // ODF scale summary — what absFloor/peakFrac are calibrated against.
+    if (!odf.empty()) {
+        std::vector<float> v;
+        v.reserve(odf.size());
+        for (auto& p : odf) v.push_back(p.second);
+        std::sort(v.begin(), v.end());
+        std::printf("odf[%s]: med %.3f  p90 %.3f  p99 %.3f  max %.3f\n", o.det.c_str(),
+                    v[v.size() / 2], v[v.size() * 9 / 10], v[v.size() * 99 / 100], v.back());
+    }
+    if (!o.dump.empty()) {
+        if (FILE* f = std::fopen(o.dump.c_str(), "w")) {
+            std::fprintf(f, "t_ms,odf\n");
+            for (auto& p : odf) std::fprintf(f, "%.2f,%.5f\n", 1000.0 * p.first / sr, p.second);
+            std::fclose(f);
+        }
+    }
+    return ts;
+}
+
 int analyzeWav(const char* path, float sens, float minGapMs, double bpm, int target,
-               float binFloor, float peakFrac, float magFloor, bool quiet) {
+               float binFloor, float peakFrac, float magFloor, bool quiet, const WavOpts& o) {
     unsigned int ch = 0, sr = 0;
     drwav_uint64 frames = 0;
     float* data = drwav_open_file_and_read_pcm_frames_f32(path, &ch, &sr, &frames, nullptr);
@@ -121,23 +183,40 @@ int analyzeWav(const char* path, float sens, float minGapMs, double bpm, int tar
     for (drwav_uint64 f = 0; f < frames; ++f) mono[f] = data[f * ch];
     drwav_free(data, nullptr);
 
-    webamp::FluxDetector det;
-    det.configure(static_cast<float>(sr));
-    det.setSensitivity(sens);
-    if (binFloor > 0) det.binFloor = binFloor;
-    if (peakFrac >= 0) det.peakFrac = peakFrac;
-    if (magFloor >= 0) det.magFloor = magFloor;
-    if (minGapMs > 0)
-        det.setMinGap(minGapMs / 1000.0f);  // explicit gap wins over the bpm-derived default
-    else if (bpm > 0 && target > 0)
-        det.setMinGap(0.45f * 60.0f / static_cast<float>(bpm * target));
-
     std::vector<uint64_t> ts;
-    det.push(mono.data(), static_cast<int>(mono.size()), ts);
+    std::string desc;
+    auto run = [&](auto tag) {
+        constexpr int N = decltype(tag)::value;
+        if (o.det == "sparsity") {
+            webamp::SparsityDetectorT<N> det;
+            if (o.gamma > 0) det.gamma = o.gamma;
+            ts = runDet(det, mono, sr, sens, minGapMs, bpm, target, peakFrac, o);
+            desc = "det=sparsity fft=" + std::to_string(N) + " gamma=" + std::to_string(det.gamma) +
+                   " absFloor=" + std::to_string(det.pick.absFloor) +
+                   " peakFrac=" + std::to_string(det.peakFrac);
+        } else {
+            webamp::FluxDetectorT<N> det;
+            if (binFloor > 0) det.binFloor = binFloor;
+            if (magFloor >= 0) det.magFloor = magFloor;
+            if (o.norm >= 0) det.normalize = o.norm != 0;
+            if (o.silenceDb > -900.0f) det.silenceDb = o.silenceDb;
+            if (o.normAtk > 0) det.normAtkS = o.normAtk;
+            if (o.normGain > 0) det.normMaxGain = o.normGain;
+            ts = runDet(det, mono, sr, sens, minGapMs, bpm, target, peakFrac, o);
+            desc = "det=flux fft=" + std::to_string(N) + " norm=" + std::to_string(det.normalize) +
+                   " binFloor=" + std::to_string(det.binFloor) +
+                   " peakFrac=" + std::to_string(det.peakFrac);
+        }
+    };
+    switch (o.fft) {
+        case 1024: run(std::integral_constant<int, 1024>{}); break;
+        case 2048: run(std::integral_constant<int, 2048>{}); break;
+        case 4096: run(std::integral_constant<int, 4096>{}); break;
+        default:   run(std::integral_constant<int, 512>{}); break;
+    }
     if (!quiet) {
-        std::printf("file: %s  (%.2f s @ %u Hz)  sens=%.2f binFloor=%.2f peakFrac=%.2f\n",
-                    path, static_cast<double>(frames) / sr, sr, sens, det.binFloor,
-                    det.peakFrac);
+        std::printf("file: %s  (%.2f s @ %u Hz)  sens=%.2f %s\n", path,
+                    static_cast<double>(frames) / sr, sr, sens, desc.c_str());
         for (size_t i = 0; i < ts.size(); ++i) {
             const double ms = 1000.0 * static_cast<double>(ts[i]) / sr;
             const double ioi =
@@ -215,16 +294,40 @@ int main(int argc, char** argv) {
                     maxMag, maxDiff, maxDiff < 0.05f * maxMag ? "ok" : "BROKEN");
     }
     // wav mode:
-    // picking_test <wav> [sens] [minGapMs] [bpm] [target] [binFloor] [peakFrac] [magFloor] [quiet]
-    if (argc > 1)
-        return analyzeWav(argv[1], argc > 2 ? static_cast<float>(std::atof(argv[2])) : 0.5f,
-                          argc > 3 ? static_cast<float>(std::atof(argv[3])) : 0.0f,
-                          argc > 4 ? std::atof(argv[4]) : 0.0,
-                          argc > 5 ? std::atoi(argv[5]) : 4,
-                          argc > 6 ? static_cast<float>(std::atof(argv[6])) : 0.0f,
-                          argc > 7 ? static_cast<float>(std::atof(argv[7])) : -1.0f,
-                          argc > 8 ? static_cast<float>(std::atof(argv[8])) : -1.0f,
-                          argc > 9);
+    // picking_test [--det=flux|sparsity] [--fft=N] [--norm=0|1] [--silence=dB]
+    //              [--natk=s] [--ngain=x] [--sw=0|1] [--swr=r] [--pmf=f] [--pmt=ms]
+    //              [--gamma=G] [--abs=A] [--dump=file.csv]
+    //              <wav> [sens] [minGapMs] [bpm] [target] [binFloor] [peakFrac] [magFloor] [quiet]
+    // Old (pre-P5f) detector for reference: --norm=0 --silence=-200 --sw=0 --pmf=0 ... 0 0.1 0.4
+    WavOpts opts;
+    std::vector<const char*> pos;
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a.rfind("--det=", 0) == 0) opts.det = a.substr(6);
+        else if (a.rfind("--fft=", 0) == 0) opts.fft = std::atoi(a.c_str() + 6);
+        else if (a.rfind("--norm=", 0) == 0) opts.norm = std::atoi(a.c_str() + 7);
+        else if (a.rfind("--silence=", 0) == 0) opts.silenceDb = static_cast<float>(std::atof(a.c_str() + 10));
+        else if (a.rfind("--natk=", 0) == 0) opts.normAtk = static_cast<float>(std::atof(a.c_str() + 7));
+        else if (a.rfind("--ngain=", 0) == 0) opts.normGain = static_cast<float>(std::atof(a.c_str() + 8));
+        else if (a.rfind("--sw=", 0) == 0) opts.sw = std::atoi(a.c_str() + 5);
+        else if (a.rfind("--pmf=", 0) == 0) opts.pmf = static_cast<float>(std::atof(a.c_str() + 6));
+        else if (a.rfind("--swr=", 0) == 0) opts.swr = static_cast<float>(std::atof(a.c_str() + 6));
+        else if (a.rfind("--pmt=", 0) == 0) opts.pmt = static_cast<float>(std::atof(a.c_str() + 6));
+        else if (a.rfind("--gamma=", 0) == 0) opts.gamma = static_cast<float>(std::atof(a.c_str() + 8));
+        else if (a.rfind("--abs=", 0) == 0) opts.absFloor = static_cast<float>(std::atof(a.c_str() + 6));
+        else if (a.rfind("--dump=", 0) == 0) opts.dump = a.substr(7);
+        else pos.push_back(argv[i]);
+    }
+    const int n = static_cast<int>(pos.size());
+    if (n > 0)
+        return analyzeWav(pos[0], n > 1 ? static_cast<float>(std::atof(pos[1])) : 0.5f,
+                          n > 2 ? static_cast<float>(std::atof(pos[2])) : 0.0f,
+                          n > 3 ? std::atof(pos[3]) : 0.0,
+                          n > 4 ? std::atoi(pos[4]) : 4,
+                          n > 5 ? static_cast<float>(std::atof(pos[5])) : 0.0f,
+                          n > 6 ? static_cast<float>(std::atof(pos[6])) : -1.0f,
+                          n > 7 ? static_cast<float>(std::atof(pos[7])) : -1.0f,
+                          n > 8, opts);
     const double bpm = 180.0;
     const double beat = kSr * 60.0 / bpm;  // 16000 samples per beat @180
 
@@ -277,7 +380,10 @@ int main(int argc, char** argv) {
         std::vector<float> buf(static_cast<size_t>(beat * 5), 0.0f);
         for (int n = 0; n < 12; ++n)
             addPluck(buf, static_cast<size_t>(1000 + n * ioi), 0.45f);
-        const auto ts = detect(buf);
+        // Free-play expected-rate gate (0.45 x subdivision), as the engine
+        // always applies one; with peakFrac at 0.03 a pluck's decay ripple
+        // can otherwise re-trigger inside the bare 25 ms floor.
+        const auto ts = detect(buf, 0.5f, static_cast<float>(0.45 * ioi / kSr));
         check("triplets @180: all 12 onsets", ts.size() == 12, "got " + std::to_string(ts.size()));
         const double npb = webamp::notesPerBeat(beat, webamp::medianIoi(ts));
         check("triplets @180: notesPerBeat ~ 3", std::fabs(npb - 3.0) < 0.15,
@@ -402,19 +508,14 @@ int main(int argc, char** argv) {
             std::printf("\n   flux frames 5500-9000 smp:\n");
             webamp::FluxDetector dbg;
             dbg.configure(kSr);
+            std::vector<std::pair<uint64_t, float>> odf;
+            dbg.odfDump = &odf;
             std::vector<uint64_t> sink;
-            uint64_t lastT = ~0ull;
-            for (size_t i = 0; i < buf.size(); i += 256) {
-                dbg.push(buf.data() + i, 256, sink);
-                const int n = dbg.histN;
-                if (n > 0 && dbg.histT[n - 1] != lastT) {
-                    lastT = dbg.histT[n - 1];
-                    const uint64_t t = lastT - webamp::FluxDetector::kFft;
-                    if (t >= 5500 && t <= 9000)
-                        std::printf("     t=%5llu flux=%7.3f\n",
-                                    static_cast<unsigned long long>(t), dbg.hist[n - 1]);
-                }
-            }
+            dbg.push(buf.data(), static_cast<int>(buf.size()), sink);
+            for (const auto& p : odf)
+                if (p.first >= 5500 && p.first <= 9000)
+                    std::printf("     t=%5llu flux=%7.3f\n",
+                                static_cast<unsigned long long>(p.first), p.second);
         }
     }
 

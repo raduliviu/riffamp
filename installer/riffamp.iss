@@ -1,7 +1,7 @@
 ; RiffAmp installer — per-user (no admin), Inno Setup 6.
 ; Build:  ISCC.exe riffamp.iss   (from this directory, after a Release build)
 
-#define AppVersion "0.2.3"
+#define AppVersion "0.2.4"
 #define BuildDir "..\helper\build\Release"
 
 [Setup]

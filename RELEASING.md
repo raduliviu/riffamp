@@ -57,6 +57,15 @@ ISCC.exe installer\riffamp.iss
 The two binaries come from two machines, so create the release on one and upload
 the other's asset from the second machine.
 
+> **Publish only once BOTH assets are attached.** Because the site follows
+> `releases/latest/download/…`, the moment a release becomes "Latest" it must
+> already have both `riffamp-setup.exe` and `riffamp.dmg`, or the missing
+> platform's button 404s. So when the two builds land at different times, create
+> the release as a **draft** (`--draft`), upload each asset as it's ready, and
+> flip it live only when both are there (`gh release edit <tag> --draft=false`).
+> A draft is not "Latest", so the current release keeps serving downloads
+> until you publish.
+
 On whichever machine has its binary first (e.g. Windows):
 
 ```bash

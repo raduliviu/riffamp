@@ -9,7 +9,7 @@
 # Output: dist/riffamp-<version>.dmg  (drag RiffAmp.app to Applications)
 set -euo pipefail
 
-VERSION="0.2.1"  # keep in step with installer/riffamp.iss (AppVersion)
+VERSION="0.2.2"  # keep in step with installer/riffamp.iss (AppVersion)
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 

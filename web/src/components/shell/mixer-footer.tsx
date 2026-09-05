@@ -122,9 +122,9 @@ export function MixerFooter() {
               })
             }
             className={
-              "w-24 shrink-0 rounded-md border px-2 py-1 text-center text-[10px] font-semibold tracking-wide transition-colors " +
+              "w-28 shrink-0 rounded-md border px-2 py-1.5 text-center text-xs font-bold tracking-wide transition-colors " +
               (muted
-                ? "border-amber-500/60 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25"
+                ? "animate-pulse border-amber-500/70 bg-amber-500/20 text-amber-500 ring-1 ring-amber-500/40 hover:bg-amber-500/30"
                 : "border-emerald-500/60 bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25")
             }
             title="Enable or mute the guitar input"

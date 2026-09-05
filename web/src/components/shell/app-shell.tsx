@@ -8,6 +8,7 @@ import { PlayView } from "@/views/play-view"
 import { PracticeView } from "@/views/practice-view"
 import { SettingsView } from "@/views/settings-view"
 import { DemoFunnelBanner } from "./demo-funnel-banner"
+import { EnableBanner } from "./enable-banner"
 import { Header } from "./header"
 import { MixerFooter } from "./mixer-footer"
 import { OfflineCard } from "./offline-card"
@@ -36,6 +37,7 @@ export function AppShell() {
         <OfflineCard />
       ) : (
         <>
+          <EnableBanner />
           <main className="flex flex-1 flex-col gap-4 p-4">
             <Tabs value={tab} onValueChange={selectTab}>
               <TabsList className="grid w-full grid-cols-3">
